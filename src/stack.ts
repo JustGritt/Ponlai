@@ -147,14 +147,14 @@ export function stackMaterial( render: RenderParts, sea: number ): THREE.MeshSta
   const wet = float( 1 ).sub( smoothstep( splash.sub( 0.6 ), splash, h ) );
   // weed and barnacles round the mean waterline
   const weedBand = smoothstep( - 1.2, - 0.2, h ).mul( float( 1 ).sub( smoothstep( 0.4, 1.1, h.add( grain.mul( 0.4 ) ) ) ) );
-  const weed = mix( rgb( 0x3b3a22 ), rgb( 0x5d5a3a ), grain.mul( 0.5 ).add( 0.5 ) );
+  const weed = mix( rgb( 0x2c2a1a ), rgb( 0x45422b ), grain.mul( 0.5 ).add( 0.5 ) );
   // grass on the flat top
   const up = smoothstep( 0.72, 0.9, normalWorld.y ).mul( smoothstep( STACK.top - 1.2, STACK.top - 0.4, h ) );
   const grass = mix( rgb( 0x4d5a28 ), rgb( 0x7a7a3c ), smoothstep( - 0.3, 0.5, grain.add( big ) ) );
   let colour = mix( rock, rock.mul( 0.45 ), wet );
   colour = mix( colour, weed, weedBand );
   colour = mix( colour, grass, up.mul( smoothstep( - 0.2, 0.1, big.add( 0.25 ) ) ) );
-  const roughness = mix( float( 0.88 ).sub( grain.mul( 0.06 ) ), float( 0.38 ), wet.mul( float( 1 ).sub( up ) ) );
+  const roughness = mix( float( 0.88 ).sub( grain.mul( 0.06 ) ), float( 0.6 ), wet.mul( float( 1 ).sub( up ) ) );
   return surface( render, { name: 'sea stack', color: colour, roughness } );
 
 }

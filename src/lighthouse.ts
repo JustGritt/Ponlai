@@ -12,7 +12,8 @@ import {
   pow, smoothstep, step, uniform, vec3, vec4,
 } from 'three/tsl';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import type { RenderParts } from './render/index.ts';
+import { velocityOutput, type RenderParts } from './render/index.ts';
+import { overlayVelocity } from './render/post/Motion.ts';
 import { albedo, rgb, surface } from './surfaces.ts';
 
 // The tower's parts, in metres above its foot.
@@ -155,10 +156,10 @@ export function createLighthouse( render: RenderParts, foot: THREE.Vector3 ): Li
   group.add( rod );
 
   // ---- the lamp and its lens. It flares as a beam swings toward the eye (`flash`).
+  // (the beams are drawn after the sea, in the water's pass; `update` keeps them at the lamp)
   const beams = new THREE.Group();
   beams.name = 'beams';
-  beams.position.y = LAMP_Y;
-  group.add( beams );
+  render.waterScene.add( beams );
   const beamAxis = uniform( new THREE.Vector3( 1, 0, 0 ) );
   const lampWorld = uniform( new THREE.Vector3() );
   const toEye = normalize( cameraPosition.sub( lampWorld ) );
@@ -174,7 +175,12 @@ export function createLighthouse( render: RenderParts, foot: THREE.Vector3 ): Li
   lens.position.y = LAMP_Y;
   group.add( lens );
 
-  // ---- the beams: two opposite cones, their apex at the lamp, along +x and -x of `beams`
+  // ---- the beams: two opposite cones, their apex at the lamp, along +x and -x of `beams`.
+  // They draw in the water's pass, after the sea: drawn with the opaque scene, they wrote no depth,
+  // so the sea drawn later covered them and showed them only through its refraction, rippled and
+  // blue wherever the sea lay behind a beam (seen from above). Their premultiplied blending adds
+  // their radiance with an alpha of 0, and they write a zero velocity (Motion.ts `overlayVelocity`),
+  // which that blending adds to the velocity under them unchanged, under the temporal modes.
   const cone = new THREE.CylinderGeometry( BEAM.radius, 0.45, BEAM.length, 48, 1, true );
   cone.translate( 0, BEAM.length / 2, 0 );
   cone.rotateZ( - Math.PI / 2 ); // +y -> +x
@@ -198,6 +204,7 @@ export function createLighthouse( render: RenderParts, foot: THREE.Vector3 ): Li
   const beamRadiance = vec3( 1.0, 0.9, 0.7 ).mul( night.mul( GLOW.beam ).mul( core ).mul( fade ).mul( near ) );
   beamMaterial.colorNode = vec4( beamRadiance, 0 );
   beamMaterial.opacityNode = float( 0 );
+  beamMaterial.mrtNode = velocityOutput( overlayVelocity( 0 ) );
   for ( const turn of [ 0, Math.PI ] ) {
 
     const beam = new THREE.Mesh( cone, beamMaterial );
@@ -246,13 +253,14 @@ export function createLighthouse( render: RenderParts, foot: THREE.Vector3 ): Li
 
     mesh.traverse( ( o ) => {
 
-      if ( ( o as THREE.Mesh ).isMesh && o.parent !== beams ) o.castShadow = o.receiveShadow = true;
+      if ( ( o as THREE.Mesh ).isMesh ) o.castShadow = o.receiveShadow = true;
 
     } );
 
   }
   group.updateMatrixWorld( true );
   const lampPosition = lamp.getWorldPosition( new THREE.Vector3() );
+  beams.position.copy( lampPosition );
 
   const axis = new THREE.Vector3();
   return {
@@ -272,7 +280,7 @@ export function createLighthouse( render: RenderParts, foot: THREE.Vector3 ): Li
     bounds() {
 
       const box = new THREE.Box3();
-      for ( const child of group.children ) if ( child !== beams ) box.expandByObject( child );
+      for ( const child of group.children ) box.expandByObject( child );
       return box;
 
     },

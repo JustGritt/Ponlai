@@ -7,11 +7,12 @@ import {
 } from './render/index.ts';
 import { browserHost } from './render/browser.ts';
 import { ISLAND_LOOK } from './looks/ponlai/IslandLook.ts';
-import { STACK, stackFields, stackGeometry, stackMaterial } from './stack.ts';
+import { STACK, stackFields, stackGeometry, stackMaterial, waterlineRadius } from './stack.ts';
 import { createLighthouse, type Lighthouse } from './lighthouse.ts';
 import { WaveProbe } from './waveProbe.ts';
 import { createFloaters, type Floaters } from './floaters.ts';
 import { albedo, surface } from './surfaces.ts';
+import { bowWreck, wreckMaterials, type WreckMaterials } from './wreckage.ts';
 
 // The scene: a sea stack with a lighthouse, far out in deep water, wreckage floating round it.
 // Ponlai's own look (exposure, haze, grading) is used as the island has it.
@@ -20,6 +21,10 @@ import { albedo, surface } from './surfaces.ts';
 const FIELD = { half: 96, cells: 192 };
 // the camera orbits this point (m above the sea)
 const TARGET_HEIGHT = 17;
+// where the ship struck: the angle about the stack of the point its stem hit (radians from +x toward
+// +z; the first view looks at the stack from about 0.75), and how far the line it came in on turns
+// from straight at the rock (a glancing blow, so the first view sees the hull from the side)
+const WRECK = { angle: 0.95, glance: - 1.05 };
 
 export async function startProject() {
 
@@ -31,6 +36,8 @@ export async function startProject() {
   let stack!: THREE.Mesh;
   let lighthouse!: Lighthouse;
   let floaters: Floaters | null = null;
+  let materials!: WreckMaterials;
+  let wreck!: ReturnType<typeof bowWreck>;
   let controls!: OrbitControls;
   let sea = 0;
 
@@ -70,6 +77,12 @@ export async function startProject() {
       showUnderwater( floor );
       refracted.add( floor );
       lighthouse = createLighthouse( render, new THREE.Vector3( - 0.6, sea + STACK.top - 0.15, - 0.8 ) );
+      // the ship the storm drove onto the stack: its bow wedged against the rock
+      materials = wreckMaterials( render, sea );
+      const stem = new THREE.Vector3( Math.cos( WRECK.angle ), 0, Math.sin( WRECK.angle ) ).multiplyScalar( waterlineRadius( WRECK.angle ) - 0.3 ).setY( sea + 2.2 );
+      wreck = bowWreck( materials, stem, Math.PI - WRECK.angle + WRECK.glance );
+      wreck.group.traverse( showUnderwater );
+      refracted.add( wreck.group );
       world.add( refracted, lighthouse.group );
       render.scene.add( world );
       world.updateMatrixWorld( true );
@@ -96,16 +109,16 @@ export async function startProject() {
       landBox: { x0: - 12, z0: - 12, x1: 12, z1: 12 },
       // no shelf: the floor's depth holds out to the horizon
       seaShape: { openSea: { from: 1e5, to: 2e5 }, reflectorTop: lighthouse.lamp.y + 4 },
-      // the sea reflects the wreckage within this box
-      heldOpaque: [ new THREE.Box3( new THREE.Vector3( - 70, sea - 1, - 70 ), new THREE.Vector3( 70, sea + 3, 70 ) ) ],
+      // the sea reflects the wreck and the wreckage within these boxes
+      heldOpaque: [ new THREE.Box3( new THREE.Vector3( - 70, sea - 1, - 70 ), new THREE.Vector3( 70, sea + 3, 70 ) ), new THREE.Box3().setFromObject( wreck.group ) ],
     } ),
     async afterWater( { render, sizing } ) {
 
       sizing.resize();
       const probe = new WaveProbe( render, fieldNodes );
-      floaters = await createFloaters( render, {
-        group: refracted, probe, sea, stack: stack.geometry,
-        onMesh: ( mesh ) => showUnderwater( mesh ),
+      floaters = await createFloaters( {
+        group: refracted, probe, sea, materials, fixed: [ stack.geometry, wreck.collider ], wreckAngle: WRECK.angle,
+        onObject: ( object ) => object.traverse( showUnderwater ),
       } );
       controls = orbit( render, sea );
       dropOnClick( render, sea, ( x, z ) => floaters?.drop( x, z ) );

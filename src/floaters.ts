@@ -1,48 +1,57 @@
-// Floating wreckage: barrels, crates and a buoy that ride the sea's actual waves, under Rapier.
+// The floating wreckage: what the storm tore from the ship, riding the sea's actual waves under Rapier.
 //
-// Each body carries a few sample points in its own frame, each standing for an equal share of its
-// volume. Every physics step, a point under the surface pushes up with the weight of the water its
-// share displaces (Archimedes), scaled by how deep it is in, and drags against the water's orbital
-// motion, so bodies heave, roll and drift with the waves rather than bob on a flat plane. The
-// surface comes from the GPU (waveProbe.ts) a frame or two late; between results each point keeps
-// the last height read for it.
+// Each body carries a few sample points in its own frame, each standing for an equal share of the
+// volume it can displace. Every physics step, a point under the surface pushes up with the weight
+// of the water its share displaces (Archimedes), scaled by how deep it is in, and drags against
+// the water's orbital motion, so the pieces heave, roll and drift with the waves rather than bob on
+// a flat plane. The surface comes from the GPU (waveProbe.ts) a frame or two late; between results
+// each point keeps the last height read for it.
 //
-// The stack is a static triangle mesh in the same world, so wreckage knocks against the rock.
+// The stack and the wreck wedged against it are fixed triangle meshes in the same world, so the
+// wreckage knocks against them.
 import * as THREE from 'three/webgpu';
 import RAPIER from '@dimforge/rapier3d-compat';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { float, fract, mix, positionLocal, smoothstep, step, uv, vec3, abs, min, mx_fractal_noise_float, positionWorld } from 'three/tsl';
-import type { RenderParts } from './render/index.ts';
-import { rgb, surface } from './surfaces.ts';
 import type { WaveProbe } from './waveProbe.ts';
+import {
+  barrelGeometry, canvasGeometry, gratingGeometry, group, hullGeometry, hullPoints, merge, mulberry32, plankGeometry, ropeGeometry, sparGeometry, wheelGeometry,
+  type HullShape, type WreckMaterials,
+} from './wreckage.ts';
 
 const WATER_DENSITY = 1025;
 const G = 9.81;
 const STEP = 1 / 60;
-const MAX_BODIES = 48;
+const MAX_BODIES = 56;
 // drag against the water, per kilogram of displaced water ( 1/s ): vertical, horizontal
 const DRAG = { vertical: 2.2, horizontal: 0.9 };
-// how far from the stack a body may drift before it is taken away (m)
-const DRIFT_LIMIT = 140;
+// how far from the stack a piece may drift before it is taken away (m)
+const DRIFT_LIMIT = 150;
 
-type Kind = 'barrel' | 'crate' | 'buoy';
+export type Kind = 'plank' | 'hull' | 'mast' | 'lifeboat' | 'wheel' | 'grating' | 'barrel';
+
+interface Variant {
+  parts: [ THREE.BufferGeometry, THREE.Material ][];
+  colliders: () => RAPIER.ColliderDesc[];
+  /** the sample points in the body's frame */
+  points: THREE.Vector3[];
+}
 
 interface KindSpec {
-  geometry: THREE.BufferGeometry;
-  material: THREE.Material;
-  collider: () => RAPIER.ColliderDesc;
-  /** the sample points in the body's frame, and the vertical extent each point stands for (m) */
-  points: THREE.Vector3[];
-  extent: number;
+  variants: Variant[];
+  /** kg */
+  mass: number;
+  /** the water it displaces fully under (m^3): the wood's, and the air a capsized boat traps */
   volume: number;
+  /** the vertical extent a sample point stands for (m) */
+  extent: number;
+  /** how a new piece of this kind is turned: any way, or only about the vertical */
+  tumble: boolean;
 }
 
 interface Body {
   kind: Kind;
+  variant: number;
   rigid: RAPIER.RigidBody;
-  mesh: THREE.Mesh;
-  /** the first of its sample slots */
-  slot: number;
+  object: THREE.Object3D;
   /** the batch after which its samples are its own */
   since: number;
   /** the latest surface under each sample point: height, vx, vy, vz */
@@ -50,7 +59,7 @@ interface Body {
 }
 
 export interface Floaters {
-  /** steps the physics by the scene clock's `dt` and moves the meshes */
+  /** steps the physics by the scene clock's `dt` and moves the pieces */
   update( dt: number ): void;
   /** drops a random piece of wreckage above the sea at x, z */
   drop( x: number, z: number ): void;
@@ -59,156 +68,242 @@ export interface Floaters {
   stats(): { sent: number; received: number; bodies: { kind: Kind; x: number; y: number; z: number; water: number }[] };
 }
 
-function barrelGeometry(): THREE.BufferGeometry {
+// ------------------------------------------------------------------------------ the kinds
 
-  // a barrel's bulging stave profile, closed at both ends
-  const R = 0.3, H = 0.9;
-  const points: THREE.Vector2[] = [ new THREE.Vector2( 0, - H / 2 ) ];
-  for ( let i = 0; i <= 12; i ++ ) {
+/** Moves every part so the parts' joint box is centred on the origin. */
+function centre( parts: THREE.BufferGeometry[] ): THREE.Box3 {
 
-    const t = i / 12, y = - H / 2 + t * H;
-    points.push( new THREE.Vector2( R * ( 0.88 + 0.12 * Math.sin( Math.PI * t ) ), y ) );
+  const box = new THREE.Box3();
+  for ( const g of parts ) {
+
+    g.computeBoundingBox();
+    box.union( g.boundingBox! );
 
   }
-  points.push( new THREE.Vector2( 0, H / 2 ) );
-  return new THREE.LatheGeometry( points, 24 );
+  const c = box.getCenter( new THREE.Vector3() );
+  for ( const g of parts ) g.translate( - c.x, - c.y, - c.z );
+  return box.translate( c.negate() );
 
 }
 
-function kinds( render: RenderParts ): Record<Kind, KindSpec> {
+/** nx x ny x nz points over `box`, pulled in by `inset`. */
+function boxPoints( box: THREE.Box3, nx: number, ny: number, nz: number, inset = 0.75 ): THREE.Vector3[] {
 
-  const grain = mx_fractal_noise_float( positionWorld.mul( vec3( 2, 9, 2 ) ), 2, 2, 0.5, 1 );
-  // barrel: oak staves with two dark iron hoops near each end
-  const y = abs( positionLocal.y );
-  const hoop = step( 0.25, y ).mul( step( y, 0.31 ) ).add( step( 0.4, y ).mul( step( y, 0.44 ) ) );
-  const oak = mix( rgb( 0x5c3b22 ), rgb( 0x7a5232 ), grain.mul( 0.5 ).add( 0.5 ) );
-  const barrelColour = mix( oak, rgb( 0x2b2b2b ), hoop );
-  const barrel = surface( render, { name: 'barrel', color: barrelColour, roughness: 0.7 } );
-  // crate: planks with a darker frame along every face's border
-  const u = uv();
-  const edge = min( min( u.x, float( 1 ).sub( u.x ) ), min( u.y, float( 1 ).sub( u.y ) ) );
-  const frame = float( 1 ).sub( smoothstep( 0.1, 0.12, edge ) );
-  const seam = smoothstep( 0.9, 0.97, fract( u.y.mul( 4 ) ) );
-  const pine = mix( rgb( 0x8a6a42 ), rgb( 0xa8865a ), grain.mul( 0.5 ).add( 0.5 ) );
-  const crateColour = mix( mix( pine, pine.mul( 0.55 ), seam ), rgb( 0x5e4528 ), frame );
-  const crate = surface( render, { name: 'crate', color: crateColour, roughness: 0.85 } );
-  // buoy: red and white bands
-  const band = step( 0.5, fract( positionLocal.y.mul( 1.6 ).add( 0.25 ) ) );
-  const buoy = surface( render, { name: 'buoy', color: mix( rgb( 0xb3261e ), rgb( 0xe6e2da ), band ), roughness: 0.45 } );
+  const out: THREE.Vector3[] = [];
+  const at = ( lo: number, hi: number, k: number, n: number ) => n === 1 ? ( lo + hi ) / 2 : ( lo + hi ) / 2 + ( hi - lo ) / 2 * inset * ( 2 * k / ( n - 1 ) - 1 );
+  for ( let i = 0; i < nx; i ++ ) for ( let j = 0; j < ny; j ++ ) for ( let k = 0; k < nz; k ++ ) {
 
-  const grid = ( hx: number, hy: number, hz: number ) => {
+    out.push( new THREE.Vector3( at( box.min.x, box.max.x, i, nx ), at( box.min.y, box.max.y, j, ny ), at( box.min.z, box.max.z, k, nz ) ) );
 
-    const out: THREE.Vector3[] = [];
-    for ( const sx of [ - 1, 1 ] ) for ( const sy of [ - 1, 1 ] ) for ( const sz of [ - 1, 1 ] ) out.push( new THREE.Vector3( sx * hx / 2, sy * hy / 2, sz * hz / 2 ) );
-    return out;
+  }
+  return out;
 
-  };
-  // a cylinder along y: three rings of four
-  const rings = ( r: number, h: number ) => {
+}
 
-    const out: THREE.Vector3[] = [];
-    for ( const yy of [ - h / 3, 0, h / 3 ] ) for ( let k = 0; k < 4; k ++ ) out.push( new THREE.Vector3( Math.cos( k * Math.PI / 2 ) * r * 0.6, yy, Math.sin( k * Math.PI / 2 ) * r * 0.6 ) );
-    return out;
+const alongX = new THREE.Quaternion().setFromAxisAngle( new THREE.Vector3( 0, 0, 1 ), Math.PI / 2 );
+const alongZ = new THREE.Quaternion().setFromAxisAngle( new THREE.Vector3( 1, 0, 0 ), Math.PI / 2 );
 
-  };
-  const top = new THREE.ConeGeometry( 0.3, 0.5, 16 );
-  top.translate( 0, 0.95, 0 );
-  const buoyGeometry = mergeGeometries( [ new THREE.CylinderGeometry( 0.42, 0.55, 1.4, 24 ), top ] );
+function kinds( m: WreckMaterials ): Record<Kind, KindSpec> {
+
+  // ---- splintered planks
+  const planks: Variant[] = [ [ 3.4, 0.26, 101 ], [ 2.6, 0.22, 102 ], [ 1.9, 0.28, 103 ], [ 2.9, 0.24, 104 ] ].map( ( [ length, width, seed ] ) => {
+
+    const g = plankGeometry( length, width, 0.065, seed );
+    const box = centre( [ g ] );
+    return {
+      parts: [ [ g, m.timber ] ],
+      colliders: () => [ RAPIER.ColliderDesc.cuboid( length / 2 - 0.15, 0.033, width / 2 ) ],
+      points: boxPoints( box, 3, 1, 1 ),
+    };
+
+  } );
+
+  // ---- torn-off pieces of the hull: planking on its ribs, broken at both ends, one torn from a side
+  const hullPieces: Variant[] = ( [
+    { length: 3.4, beam: 1.9, depth: 1.1, sheer: 0, ends: 'broken', jag: 0.18, holes: 0.12, span: [ - 1, 0.35 ], seed: 11 },
+    { length: 2.7, beam: 1.6, depth: 0.95, sheer: 0, ends: 'broken', jag: 0.22, holes: 0.1, span: [ - 0.25, 1 ], seed: 12 },
+  ] as HullShape[] ).map( ( shape ) => {
+
+    const { shell, frames } = hullGeometry( shape );
+    const box = centre( [ shell, frames ] );
+    const outline = hullPoints( shell );
+    return {
+      parts: [ [ shell, m.hull ], [ frames, m.timber ] ],
+      colliders: () => [ RAPIER.ColliderDesc.convexHull( outline )! ],
+      points: boxPoints( box, 3, 2, 2 ),
+    };
+
+  } );
+
+  // ---- the capsized lifeboat, keel up: thwarts inside, the air under it keeping it afloat
+  const lifeboat = ( () => {
+
+    const shape: HullShape = { length: 4.2, beam: 1.5, depth: 0.65, sheer: 0.28, ends: 'boat', jag: 0, holes: 0, seed: 21 };
+    const { shell, frames } = hullGeometry( shape );
+    const thwarts: THREE.BufferGeometry[] = [ 1.2, 2.1, 3.0 ].map( ( x ) => {
+
+      const t = new THREE.BoxGeometry( 0.22, 0.05, shape.beam * 0.86 );
+      t.translate( x, - 0.22, 0 );
+      return t;
+
+    } );
+    const timber = merge( [ frames, ...thwarts ] );
+    for ( const g of [ shell, timber ] ) g.rotateX( Math.PI );
+    const box = centre( [ shell, timber ] );
+    const outline = hullPoints( shell );
+    return {
+      parts: [ [ shell, m.hull ], [ timber, m.timber ] ],
+      colliders: () => [ RAPIER.ColliderDesc.convexHull( outline )! ],
+      points: boxPoints( box, 3, 2, 2 ),
+    } as Variant;
+
+  } )();
+
+  // ---- the broken mast: the mast snapped off, its yard across it, the torn sail spread on the water,
+  // rope trailing from the yard
+  const mast = ( () => {
+
+    // the mast along x about the origin, its yard across it at YARD (the body's frame)
+    const YARD = new THREE.Vector3( 1.7, 0.26, 0.3 );
+    const spar = sparGeometry( 6.6, 0.19, 31 );
+    const yard = sparGeometry( 4.8, 0.1, 32 );
+    yard.rotateY( Math.PI / 2 );
+    yard.translate( YARD.x, YARD.y, YARD.z );
+    const sail = canvasGeometry( 2.9, 4.4, 33 );
+    sail.translate( YARD.x - 1.5, 0.12, YARD.z );
+    const ropes = merge( [
+      ropeGeometry( [ new THREE.Vector3( YARD.x, 0.3, 2.6 ), new THREE.Vector3( YARD.x + 0.8, 0.05, 3.1 ), new THREE.Vector3( YARD.x + 2.2, - 0.05, 3.3 ), new THREE.Vector3( YARD.x + 3.4, 0, 2.7 ) ] ),
+      ropeGeometry( [ new THREE.Vector3( 2.9, 0.18, 0 ), new THREE.Vector3( 3.6, 0.05, - 0.9 ), new THREE.Vector3( 4.6, - 0.05, - 1.3 ), new THREE.Vector3( 5.5, 0, - 0.8 ) ] ),
+      ropeGeometry( [ new THREE.Vector3( YARD.x, 0.3, - 2.0 ), new THREE.Vector3( YARD.x - 0.6, 0.08, - 2.7 ), new THREE.Vector3( YARD.x - 1.8, - 0.02, - 3.0 ) ] ),
+    ] );
+    return {
+      parts: [ [ merge( [ spar, yard ] ), m.timber ], [ sail, m.canvas ], [ ropes, m.rope ] ],
+      colliders: () => [
+        RAPIER.ColliderDesc.cylinder( 3.2, 0.19 ).setRotation( alongX ),
+        RAPIER.ColliderDesc.cylinder( 2.3, 0.1 ).setRotation( alongZ ).setTranslation( YARD.x, YARD.y, YARD.z ),
+      ],
+      // along the mast, the yard's ends and the sail's corners (the cloth holds some air)
+      points: [ - 2.6, - 1.3, 0, 1.3, 2.6 ].map( ( x ) => new THREE.Vector3( x, 0, 0 ) ).concat( [
+        new THREE.Vector3( YARD.x, YARD.y, YARD.z + 2.1 ), new THREE.Vector3( YARD.x, YARD.y, YARD.z - 2.1 ),
+        new THREE.Vector3( YARD.x - 2.4, 0.12, YARD.z + 1.6 ), new THREE.Vector3( YARD.x - 2.4, 0.12, YARD.z - 1.6 ),
+      ] ),
+    } as Variant;
+
+  } )();
+
+  // ---- the ship's wheel
+  const wheel = ( () => {
+
+    const { timber, brass } = wheelGeometry();
+    return {
+      parts: [ [ timber, m.timber ], [ brass, m.brass ] ],
+      colliders: () => [ RAPIER.ColliderDesc.cylinder( 0.06, 0.8 ) ],
+      points: [ 0, 1, 2, 3 ].map( ( k ) => new THREE.Vector3( Math.cos( k * Math.PI / 2 ) * 0.5, 0, Math.sin( k * Math.PI / 2 ) * 0.5 ) ),
+    } as Variant;
+
+  } )();
+
+  // ---- a hatch grating
+  const grating = ( () => {
+
+    const g = gratingGeometry( 1.3, 0.9 );
+    return {
+      parts: [ [ g, m.timber ] ],
+      colliders: () => [ RAPIER.ColliderDesc.cuboid( 0.65, 0.05, 0.45 ) ],
+      points: boxPoints( new THREE.Box3( new THREE.Vector3( - 0.65, 0, - 0.45 ), new THREE.Vector3( 0.65, 0, 0.45 ) ), 2, 1, 2 ),
+    } as Variant;
+
+  } )();
+
+  // ---- the cargo's barrels: three rings of four points along the axis
+  const barrel = ( () => {
+
+    const points: THREE.Vector3[] = [];
+    for ( const y of [ - 0.3, 0, 0.3 ] ) for ( let k = 0; k < 4; k ++ ) points.push( new THREE.Vector3( Math.cos( k * Math.PI / 2 ) * 0.18, y, Math.sin( k * Math.PI / 2 ) * 0.18 ) );
+    return { parts: [ [ barrelGeometry(), m.barrel ] ], colliders: () => [ RAPIER.ColliderDesc.cylinder( 0.45, 0.3 ) ], points } as Variant;
+
+  } )();
+
   return {
-    barrel: {
-      geometry: barrelGeometry(), material: barrel,
-      // a light barrel: empty, sealed
-      collider: () => RAPIER.ColliderDesc.cylinder( 0.45, 0.3 ).setDensity( 280 ),
-      points: rings( 0.3, 0.9 ), extent: 0.3, volume: Math.PI * 0.3 * 0.3 * 0.9,
-    },
-    crate: {
-      geometry: new THREE.BoxGeometry( 0.8, 0.8, 0.8 ), material: crate,
-      collider: () => RAPIER.ColliderDesc.cuboid( 0.4, 0.4, 0.4 ).setDensity( 470 ),
-      points: grid( 0.8, 0.8, 0.8 ), extent: 0.4, volume: 0.512,
-    },
-    buoy: {
-      geometry: buoyGeometry, material: buoy,
-      // ballasted: its mass low, so it floats upright
-      collider: () => RAPIER.ColliderDesc.cylinder( 0.7, 0.5 ).setMassProperties( 220, { x: 0, y: - 0.45, z: 0 }, { x: 30, y: 20, z: 30 }, { x: 0, y: 0, z: 0, w: 1 } ),
-      points: rings( 0.5, 1.4 ), extent: 0.47, volume: Math.PI * 0.5 * 0.5 * 1.4,
-    },
+    plank: { variants: planks, mass: 34, volume: 0.058, extent: 0.1, tumble: false },
+    hull: { variants: hullPieces, mass: 380, volume: 0.85, extent: 0.35, tumble: true },
+    lifeboat: { variants: [ lifeboat ], mass: 420, volume: 1.9, extent: 0.25, tumble: false },
+    mast: { variants: [ mast ], mass: 520, volume: 1.0, extent: 0.2, tumble: false },
+    wheel: { variants: [ wheel ], mass: 30, volume: 0.06, extent: 0.08, tumble: false },
+    grating: { variants: [ grating ], mass: 28, volume: 0.055, extent: 0.08, tumble: false },
+    barrel: { variants: [ barrel ], mass: 70, volume: 0.25, extent: 0.3, tumble: true },
   };
 
 }
 
-/** The floating wreckage, its physics world and its meshes (added to `group`). */
-export async function createFloaters( render: RenderParts, opts: {
-  group: THREE.Group; probe: WaveProbe; sea: number; stack: THREE.BufferGeometry; onMesh: ( mesh: THREE.Mesh ) => void;
+// what a click drops, by weight
+const DROPS: [ Kind, number ][] = [ [ 'plank', 5 ], [ 'hull', 2 ], [ 'barrel', 2 ], [ 'grating', 1.5 ], [ 'wheel', 0.6 ], [ 'mast', 0.6 ], [ 'lifeboat', 0.5 ] ];
+
+/** The floating wreckage, its physics world and its pieces (added to `opts.group`). */
+export async function createFloaters( opts: {
+  group: THREE.Group; probe: WaveProbe; sea: number; materials: WreckMaterials;
+  /** fixed triangle meshes in world space: the stack, the wreck */
+  fixed: THREE.BufferGeometry[];
+  /** where the wreck lies (radians about y from +x toward +z): the debris field spreads from there */
+  wreckAngle: number;
+  onObject: ( object: THREE.Object3D ) => void;
 } ): Promise<Floaters> {
 
   await RAPIER.init();
   const world = new RAPIER.World( { x: 0, y: - G, z: 0 } );
   world.timestep = STEP;
-  const { probe, sea, group } = opts;
+  const { probe, sea } = opts;
 
-  // the stack, as a fixed triangle mesh
-  const positions = opts.stack.attributes.position.array as Float32Array;
-  const indices = new Uint32Array( opts.stack.index!.array );
-  world.createCollider( RAPIER.ColliderDesc.trimesh( new Float32Array( positions ), indices ).setFriction( 0.8 ), world.createRigidBody( RAPIER.RigidBodyDesc.fixed() ) );
+  for ( const geometry of opts.fixed ) {
 
-  const specs = kinds( render );
+    const positions = new Float32Array( geometry.attributes.position.array );
+    const indices = new Uint32Array( geometry.index!.array );
+    world.createCollider( RAPIER.ColliderDesc.trimesh( positions, indices ).setFriction( 0.8 ), world.createRigidBody( RAPIER.RigidBodyDesc.fixed() ) );
+
+  }
+
+  const specs = kinds( opts.materials );
   const bodies: Body[] = [];
-  let nextSlot = 0;
   let accumulator = 0;
   const xz = new Float32Array( probe.capacity * 2 );
   const p = new THREE.Vector3(), q = new THREE.Quaternion();
-  let seed = 12345;
-  const random = () => {
-
-    seed = ( seed * 16807 ) % 2147483647;
-    return seed / 2147483647;
-
-  };
-
-  // the slots each body's points take in the probe's batch, packed in the bodies' order
-  const repack = () => {
-
-    nextSlot = 0;
-    for ( const body of bodies ) {
-
-      body.slot = nextSlot;
-      nextSlot += specs[ body.kind ].points.length;
-
-    }
-
-  };
+  const random = mulberry32( 2026 );
 
   const spawn = ( kind: Kind, x: number, y: number, z: number ) => {
 
     if ( bodies.length >= MAX_BODIES ) remove( bodies[ 0 ] );
     const spec = specs[ kind ];
-    const rotation = new THREE.Quaternion().setFromEuler( new THREE.Euler( random() * Math.PI, random() * Math.PI, random() * Math.PI ) );
-    if ( kind === 'buoy' ) rotation.identity();
+    const variant = Math.floor( random() * spec.variants.length );
+    const v = spec.variants[ variant ];
+    const yaw = random() * Math.PI * 2;
+    const rotation = spec.tumble
+      ? new THREE.Quaternion().setFromEuler( new THREE.Euler( random() * Math.PI * 2, yaw, random() * Math.PI * 2 ) )
+      : new THREE.Quaternion().setFromEuler( new THREE.Euler( ( random() - 0.5 ) * 0.3, yaw, ( random() - 0.5 ) * 0.3 ) );
     const rigid = world.createRigidBody( RAPIER.RigidBodyDesc.dynamic()
       .setTranslation( x, y, z ).setRotation( rotation )
-      .setAngvel( { x: ( random() - 0.5 ) * 2, y: ( random() - 0.5 ) * 2, z: ( random() - 0.5 ) * 2 } )
+      .setAngvel( { x: ( random() - 0.5 ), y: ( random() - 0.5 ), z: ( random() - 0.5 ) } )
       .setLinearDamping( 0.05 ).setAngularDamping( 0.4 ).setCanSleep( false ) );
-    world.createCollider( spec.collider().setFriction( 0.6 ).setRestitution( 0.15 ), rigid );
-    const mesh = new THREE.Mesh( spec.geometry, spec.material );
-    mesh.name = kind;
-    mesh.castShadow = mesh.receiveShadow = true;
-    group.add( mesh );
-    opts.onMesh( mesh );
-    const water = new Float32Array( spec.points.length * 4 );
-    for ( let k = 0; k < spec.points.length; k ++ ) water[ k * 4 ] = sea;
-    bodies.push( { kind, rigid, mesh, slot: 0, since: probe.sent, water } );
-    repack();
+    const colliders = v.colliders();
+    for ( const collider of colliders ) world.createCollider( collider.setMass( spec.mass / colliders.length ).setFriction( 0.7 ).setRestitution( 0.1 ), rigid );
+    const object = group( ...v.parts );
+    object.name = kind;
+    opts.group.add( object );
+    opts.onObject( object );
+    const water = new Float32Array( v.points.length * 4 );
+    for ( let k = 0; k < v.points.length; k ++ ) water[ k * 4 ] = sea;
+    bodies.push( { kind, variant, rigid, object, since: probe.sent, water } );
 
   };
 
   const remove = ( body: Body ) => {
 
     world.removeRigidBody( body.rigid );
-    group.remove( body.mesh );
+    opts.group.remove( body.object );
     bodies.splice( bodies.indexOf( body ), 1 );
-    repack();
 
   };
+
+  const pointsOf = ( body: Body ) => specs[ body.kind ].variants[ body.variant ].points;
 
   // the batch in flight's layout: which body held which slots when it was sent
   let sentLayout: { body: Body; slot: number }[] = [];
@@ -217,7 +312,7 @@ export async function createFloaters( render: RenderParts, opts: {
     for ( const { body, slot } of sentLayout ) {
 
       if ( ! bodies.includes( body ) || batch <= body.since ) continue;
-      body.water.set( probe.result.subarray( slot * 4, ( slot + specs[ body.kind ].points.length ) * 4 ) );
+      body.water.set( probe.result.subarray( slot * 4, ( slot + pointsOf( body ).length ) * 4 ) );
 
     }
 
@@ -230,10 +325,12 @@ export async function createFloaters( render: RenderParts, opts: {
     const layout: { body: Body; slot: number }[] = [];
     for ( const body of bodies ) {
 
+      const points = pointsOf( body );
+      if ( n + points.length > probe.capacity ) break;
       layout.push( { body, slot: n } );
       const t = body.rigid.translation(), r = body.rigid.rotation();
       q.set( r.x, r.y, r.z, r.w );
-      for ( const local of specs[ body.kind ].points ) {
+      for ( const local of points ) {
 
         p.copy( local ).applyQuaternion( q ).add( t as THREE.Vector3Like );
         xz[ n * 2 ] = p.x;
@@ -254,13 +351,14 @@ export async function createFloaters( render: RenderParts, opts: {
     for ( const body of bodies ) {
 
       const spec = specs[ body.kind ];
-      const share = spec.volume / spec.points.length;
+      const points = pointsOf( body );
+      const share = spec.volume / points.length;
       const t = body.rigid.translation(), r = body.rigid.rotation();
       q.set( r.x, r.y, r.z, r.w );
       body.rigid.resetForces( true );
       body.rigid.resetTorques( true );
       let wet = 0;
-      spec.points.forEach( ( local, k ) => {
+      points.forEach( ( local, k ) => {
 
         p.copy( local ).applyQuaternion( q ).add( t as THREE.Vector3Like );
         const height = body.water[ k * 4 ];
@@ -269,7 +367,7 @@ export async function createFloaters( render: RenderParts, opts: {
         if ( f <= 0 ) return;
         wet += f;
         const displaced = WATER_DENSITY * share * f;
-        // the point's own velocity: the body's plus its spin's
+        // the point's own velocity: the body's plus its spin's, against the water's
         const v = body.rigid.velocityAtPoint( p );
         const rx = v.x - body.water[ k * 4 + 1 ], ry = v.y - body.water[ k * 4 + 2 ], rz = v.z - body.water[ k * 4 + 3 ];
         force.x = - displaced * DRAG.horizontal * rx;
@@ -291,25 +389,33 @@ export async function createFloaters( render: RenderParts, opts: {
     for ( const body of bodies ) {
 
       const t = body.rigid.translation(), r = body.rigid.rotation();
-      body.mesh.position.set( t.x, t.y, t.z );
-      body.mesh.quaternion.set( r.x, r.y, r.z, r.w );
-      body.mesh.updateMatrixWorld();
+      body.object.position.set( t.x, t.y, t.z );
+      body.object.quaternion.set( r.x, r.y, r.z, r.w );
+      body.object.updateMatrixWorld();
 
     }
 
   };
 
-  const DROP_KINDS: Kind[] = [ 'barrel', 'barrel', 'crate', 'crate', 'crate' ];
-  // the first wreckage, scattered round the stack, already afloat
-  for ( let i = 0; i < 14; i ++ ) {
+  // The debris field: spread from the wreck down the stack's side and out to sea, already afloat.
+  const field: [ Kind, number ][] = [
+    [ 'mast', 1 ], [ 'lifeboat', 1 ], [ 'hull', 3 ], [ 'wheel', 1 ], [ 'grating', 2 ], [ 'plank', 12 ], [ 'barrel', 4 ],
+  ];
+  for ( const [ kind, count ] of field ) for ( let i = 0; i < count; i ++ ) {
 
-    const a = random() * Math.PI * 2, r = 16 + random() * 22;
-    spawn( DROP_KINDS[ i % DROP_KINDS.length ], Math.cos( a ) * r, sea + 0.3, Math.sin( a ) * r );
+    const a = opts.wreckAngle + ( random() - 0.5 ) * 2.2, r = 15 + random() * 36;
+    spawn( kind, Math.cos( a ) * r, sea + 0.2, Math.sin( a ) * r );
 
   }
-  spawn( 'buoy', 26, sea, - 14 );
-  spawn( 'buoy', - 30, sea, 18 );
   sync();
+
+  const pick = () => {
+
+    let w = random() * DROPS.reduce( ( s, [ , weight ] ) => s + weight, 0 );
+    for ( const [ kind, weight ] of DROPS ) if ( ( w -= weight ) <= 0 ) return kind;
+    return 'plank';
+
+  };
 
   return {
     get count() {
@@ -323,7 +429,7 @@ export async function createFloaters( render: RenderParts, opts: {
         sent: probe.sent, received: probe.received,
         bodies: bodies.map( ( body ) => {
 
-          const t = body.rigid.translation(), n = specs[ body.kind ].points.length;
+          const t = body.rigid.translation(), n = pointsOf( body ).length;
           let water = 0;
           for ( let k = 0; k < n; k ++ ) water += body.water[ k * 4 ];
           return { kind: body.kind, x: + t.x.toFixed( 2 ), y: + t.y.toFixed( 3 ), z: + t.z.toFixed( 2 ), water: + ( water / n ).toFixed( 3 ) };
@@ -355,7 +461,7 @@ export async function createFloaters( render: RenderParts, opts: {
     },
     drop( x: number, z: number ) {
 
-      spawn( DROP_KINDS[ Math.floor( random() * DROP_KINDS.length ) ], x, sea + 6 + random() * 3, z );
+      spawn( pick(), x, sea + 5 + random() * 3, z );
       sync();
 
     },

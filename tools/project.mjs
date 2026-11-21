@@ -19,7 +19,7 @@ export default Object.freeze( {
 	} ),
 
 	// the title of the notices the tools post
-	name: 'Blank project',
+	name: 'Lighthouse',
 
 	// where the tools write, under the project's root; the project's .gitignore holds `root`
 	output: Object.freeze( {

@@ -14,9 +14,13 @@ import { createFloaters, type Floaters } from './floaters.ts';
 import { albedo, surface } from './surfaces.ts';
 import { bowWreck, wreckMaterials, type WreckMaterials } from './wreckage.ts';
 import { createSoundscape, type Soundscape, type SoundSources } from './sound.ts';
+import { createBoat, plotRoute, type Boat } from './boat.ts';
+import { createGulls, findPerches, type Gulls, type Orbit } from './gulls.ts';
+import { createFish, type Fish } from './fish.ts';
 
 // The scene: a sea stack with a lighthouse among lesser rocks, far out in deep water, a wreck on the
-// stack and its wreckage floating round it, and the sound of it all.
+// stack and its wreckage floating round it, a fishing boat working round the rocks, gulls over it
+// all and mackerel under the surface, and the sound of it all.
 // Ponlai's own look (exposure, haze, grading) is used as the island has it.
 
 // the fields round the stack: their half size and cells a side (1 m cells)
@@ -31,6 +35,9 @@ const MUTED_KEY = 'lighthouse.muted';
 // +z; the first view looks at the stack from about 0.75), and how far the line it came in on turns
 // from straight at the rock (a glancing blow, so the first view sees the hull from the side)
 const WRECK = { angle: 0.95, glance: - 1.05 };
+// where the boat starts on its route: the angle about the stack (it then comes round in front of the
+// first view's stack, counter-clockwise seen from above)
+const BOAT_START = 0.3;
 
 export async function startProject() {
 
@@ -48,6 +55,9 @@ export async function startProject() {
   let wreck!: ReturnType<typeof bowWreck>;
   let controls!: OrbitControls;
   let sound: Soundscape | null = null;
+  let boat: Boat | null = null;
+  let gulls: Gulls | null = null;
+  let fish: Fish | null = null;
   let sea = 0;
 
   const running = await startScene( host, { look: ISLAND_LOOK, defaults: { hour: DAY_PRESETS.dusk, dayLength: 2880 } }, {
@@ -140,18 +150,41 @@ export async function startProject() {
 
       sizing.resize();
       const probe = new WaveProbe( render, fieldNodes );
-      sound = createSoundscape( render.camera, soundSources( rocks, sea, wreck.group ), readMuted() );
-      soundButton( sound );
       floaters = await createFloaters( {
         group: refracted, probe, sea, materials, fixed: [ ...rockMeshes.map( ( mesh ) => mesh.geometry ), wreck.collider ], wreckAngle: WRECK.angle,
         clear: ( x, z ) => shoreDistance( rocks, x, z ) > 2.5,
         onObject: ( object ) => object.traverse( showUnderwater ),
         onSplash: ( x, y, z, speed ) => sound?.splash( x, y, z, speed ),
       } );
+      // the fishing boat on its route round the stack, clear of the rocks and the wreck
+      const wreckBox = new THREE.Box3().setFromObject( wreck.group );
+      const wreckAt = wreckBox.getCenter( new THREE.Vector3() ), wreckReach = Math.hypot( wreckBox.max.x - wreckBox.min.x, wreckBox.max.z - wreckBox.min.z ) / 2;
+      const route = plotRoute( ( x, z ) => Math.min( shoreDistance( rocks, x, z ), Math.hypot( x - wreckAt.x, z - wreckAt.z ) - wreckReach ) );
+      boat = createBoat( render, sea, route, BOAT_START );
+      floaters.launch( boat.vessel );
+      boat.update();
+      const theBoat = boat;
+      render.localLights.add( { name: 'boat', cost: 'none', testMode: 'stateless', land: 'independent', sources: () => theBoat.lights() } );
+      // the gulls over the lantern, the stacks and the boat, standing on the rocks
+      gulls = createGulls( render, {
+        sea, orbits: gullOrbits( rocks, sea, boat ), perches: findPerches( rockMeshes.map( ( mesh ) => mesh.geometry ), sea ),
+        ceiling: ceiling( rocks, sea, lighthouse.lamp, wreckBox, boat ),
+      } );
+      world.add( gulls.mesh );
+      // the mackerel round the rocks, shy of the boat
+      fish = createFish( render, {
+        sea, shore: ( x, z ) => shoreDistance( rocks, x, z ), threat: boat.position,
+        onSplash: ( x, y, z ) => sound?.splash( x, y, z, 3, 0.22 ),
+      } );
+      world.add( fish.mesh );
+      sound = createSoundscape( render.camera, soundSources( rocks, sea, wreck.group, gulls, boat ), readMuted() );
+      soundButton( sound );
       controls = orbit( render, sea );
       dropOnClick( render, sea, ( x, z ) => floaters?.drop( x, z ) );
       // for the console and the tools: `__LIGHTHOUSE__.floaters.stats()`
-      ( window as unknown as { __LIGHTHOUSE__: unknown } ).__LIGHTHOUSE__ = { floaters, probe, controls, camera: render.camera };
+      ( window as unknown as { __LIGHTHOUSE__: unknown } ).__LIGHTHOUSE__ = {
+        floaters, probe, controls, camera: render.camera, boat, route, gulls, fish, shore: ( x: number, z: number ) => shoreDistance( rocks, x, z ),
+      };
 
     },
     frame: ( { render, shared } ) => {
@@ -185,6 +218,15 @@ export async function startProject() {
             lighthouse.night.value = night;
             lighthouse.update( shared.time.value );
             floaters?.update( dt );
+            if ( boat ) {
+
+              boat.night.value = night;
+              boat.update();
+              render.localLights.refresh();
+
+            }
+            gulls?.update( dt, night );
+            fish?.update( dt, night );
             sound?.update( dt, night, sea );
             hud( floaters?.count ?? 0 );
 
@@ -201,8 +243,8 @@ export async function startProject() {
 }
 
 /** Where the scene's sounds come from: surf at each rock that has its own (round the main stack, at
- * four points), the gulls round the lantern and over the outer stacks, the wreck's timbers. */
-function soundSources( rocks: readonly RockShape[], sea: number, wreck: THREE.Object3D ): SoundSources {
+ * four points), the gulls themselves, the boat's engine, the wreck's timbers. */
+function soundSources( rocks: readonly RockShape[], sea: number, wreck: THREE.Object3D, gulls: Gulls, boat: Boat ): SoundSources {
 
   const surf: SoundSources[ 'surf' ] = [];
   for ( const shape of rocks ) {
@@ -220,20 +262,49 @@ function soundSources( rocks: readonly RockShape[], sea: number, wreck: THREE.Ob
     }
 
   }
+  return {
+    surf,
+    gull: () => gulls.caller( Math.random ),
+    boat,
+    wreck: new THREE.Box3().setFromObject( wreck ).getCenter( new THREE.Vector3() ),
+  };
+
+}
+
+/** The circles the gulls wheel round: high round the lantern, over the outer stacks and the stump,
+ * and low over the boat, following it. */
+function gullOrbits( rocks: readonly RockShape[], sea: number, boat: Boat ): Orbit[] {
+
   const above = ( name: string ) => {
 
     const shape = rocks.find( ( r ) => r.rock.name === name )!;
-    return new THREE.Vector3( shape.rock.x, sea + shape.top + 8, shape.rock.z );
+    return new THREE.Vector3( shape.rock.x, sea + shape.top + 6, shape.rock.z );
 
   };
-  return {
-    surf,
-    roosts: [
-      { centre: new THREE.Vector3( 0, sea + STACK_TOP + 12, 0 ), radius: 24, weight: 3 },
-      { centre: above( 'sister stack' ), radius: 14, weight: 2 },
-      { centre: above( 'far stack' ), radius: 12, weight: 1 },
-    ],
-    wreck: new THREE.Box3().setFromObject( wreck ).getCenter( new THREE.Vector3() ),
+  return [
+    { centre: new THREE.Vector3( 0, sea + STACK_TOP + 10, 0 ), lift: [ - 2, 8 ], radius: [ 16, 30 ], weight: 3 },
+    { centre: above( 'sister stack' ), lift: [ - 2, 5 ], radius: [ 9, 16 ], weight: 2 },
+    { centre: above( 'far stack' ), lift: [ - 2, 5 ], radius: [ 8, 14 ], weight: 1 },
+    { centre: above( 'stump' ), lift: [ 0, 6 ], radius: [ 8, 12 ], weight: 1 },
+    { centre: boat.position, lift: [ 6, 11 ], radius: [ 6, 11 ], weight: 2.5, speed: 7.5 },
+  ];
+
+}
+
+/** The least height a gull may fly at over x, z: above every rock near it, the tower, the wreck and
+ * the boat's mast. */
+function ceiling( rocks: readonly RockShape[], sea: number, lamp: THREE.Vector3, wreck: THREE.Box3, boat: Boat ): ( x: number, z: number ) => number {
+
+  const wreckNear = wreck.clone().expandByScalar( 3 );
+  return ( x, z ) => {
+
+    let c = sea + 1.5;
+    for ( const rock of rocks ) if ( rock.distance( x, z ) < 6 ) c = Math.max( c, sea + rock.top + 2.5 );
+    if ( Math.hypot( x - lamp.x, z - lamp.z ) < 6 ) c = Math.max( c, lamp.y + 4 );
+    if ( x > wreckNear.min.x && x < wreckNear.max.x && z > wreckNear.min.z && z < wreckNear.max.z ) c = Math.max( c, wreck.max.y + 2 );
+    if ( Math.hypot( x - boat.position.x, z - boat.position.z ) < 6 ) c = Math.max( c, boat.position.y + 6.5 );
+    return c;
+
   };
 
 }

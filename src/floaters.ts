@@ -10,6 +10,11 @@
 // The rocks and the wreck wedged against the stack are fixed triangle meshes in the same world, so
 // the wreckage knocks against them. A piece dropped from above reports its splash as it meets the
 // water, for the sound.
+//
+// A vessel (`launch`: the fishing boat, boat.ts) floats the same way, with its own mass, centre of
+// mass and inertia, and drag that differs along its keel and across it, so it runs ahead and
+// resists going sideways; its pilot adds its engine's thrust and its rudder's turn every step. It
+// is kept whatever the count of pieces and however far it goes, and it shoves the wreckage aside.
 import * as THREE from 'three/webgpu';
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { WaveProbe } from './waveProbe.ts';
@@ -48,11 +53,51 @@ interface KindSpec {
   tumble: boolean;
 }
 
+/** Drag against the water per kilogram of displaced water ( 1/s ), in a body's own frame. */
+export interface HullDrag {
+  /** along its x (the keel) */
+  along: number;
+  /** across it (z) */
+  across: number;
+  vertical: number;
+}
+
+/** A vessel under its own power (`Floaters.launch`). Its frame: x forward, y up, z to starboard. */
+export interface VesselSpec {
+  name: string;
+  /** its meshes, in its own frame */
+  object: THREE.Object3D;
+  /** its colliders, in its own frame; their density is ignored (the mass is given) */
+  colliders: () => RAPIER.ColliderDesc[];
+  /** the sample points, as a piece's (each an equal share of `volume`) */
+  points: THREE.Vector3[];
+  /** kg, the centre of mass and the principal moments of inertia ( kg m^2 ) in its frame */
+  mass: number;
+  centreOfMass: THREE.Vector3;
+  inertia: THREE.Vector3;
+  /** the water it displaces with every point under (m^3), and a point's vertical extent (m) */
+  volume: number;
+  extent: number;
+  drag: HullDrag;
+  /** where it starts: its frame's origin (world) and its heading (radians about y) */
+  start: THREE.Vector3;
+  heading: number;
+  /** every physics step, after the water's forces: the pilot's own (thrust, rudder) */
+  steer( rigid: RAPIER.RigidBody, step: number ): void;
+}
+
 interface Body {
-  kind: Kind;
-  variant: number;
+  kind: Kind | 'vessel';
   rigid: RAPIER.RigidBody;
   object: THREE.Object3D;
+  /** the sample points in its frame, the share of the volume each displaces and its extent */
+  points: THREE.Vector3[];
+  share: number;
+  extent: number;
+  /** drag in its own frame; null: the wreckage's, the same in every direction (DRAG) */
+  drag: HullDrag | null;
+  /** a vessel: never taken away, steered every step */
+  steer: VesselSpec[ 'steer' ] | null;
   /** the batch after which its samples are its own */
   since: number;
   /** the latest surface under each sample point: height, vx, vy, vz */
@@ -66,9 +111,12 @@ export interface Floaters {
   update( dt: number ): void;
   /** drops a random piece of wreckage above the sea at x, z */
   drop( x: number, z: number ): void;
+  /** puts a vessel on the sea (its object joins the group) and returns its body */
+  launch( vessel: VesselSpec ): RAPIER.RigidBody;
+  /** the pieces of wreckage afloat (the vessels not counted) */
   readonly count: number;
   /** the probe's batches and every body's height against the mean water under its points */
-  stats(): { sent: number; received: number; bodies: { kind: Kind; x: number; y: number; z: number; water: number }[] };
+  stats(): { sent: number; received: number; bodies: { kind: Kind | 'vessel'; x: number; y: number; z: number; water: number }[] };
 }
 
 // ------------------------------------------------------------------------------ the kinds
@@ -278,7 +326,8 @@ export async function createFloaters( opts: {
 
   const spawn = ( kind: Kind, x: number, y: number, z: number, falling = false ) => {
 
-    if ( bodies.length >= MAX_BODIES ) remove( bodies[ 0 ] );
+    const pieces = bodies.filter( ( b ) => ! b.steer );
+    if ( pieces.length >= MAX_BODIES ) remove( pieces[ 0 ] );
     const spec = specs[ kind ];
     const variant = Math.floor( random() * spec.variants.length );
     const v = spec.variants[ variant ];
@@ -296,9 +345,10 @@ export async function createFloaters( opts: {
     object.name = kind;
     opts.group.add( object );
     opts.onObject( object );
-    const water = new Float32Array( v.points.length * 4 );
-    for ( let k = 0; k < v.points.length; k ++ ) water[ k * 4 ] = sea;
-    bodies.push( { kind, variant, rigid, object, since: probe.sent, water, falling } );
+    bodies.push( {
+      kind, rigid, object, points: v.points, share: spec.volume / v.points.length, extent: spec.extent, drag: null, steer: null,
+      since: probe.sent, water: still( v.points.length ), falling,
+    } );
 
   };
 
@@ -310,7 +360,14 @@ export async function createFloaters( opts: {
 
   };
 
-  const pointsOf = ( body: Body ) => specs[ body.kind ].variants[ body.variant ].points;
+  // the surface under a new body's points, until its first samples: the mean sea, still
+  const still = ( n: number ) => {
+
+    const water = new Float32Array( n * 4 );
+    for ( let k = 0; k < n; k ++ ) water[ k * 4 ] = sea;
+    return water;
+
+  };
 
   // the batch in flight's layout: which body held which slots when it was sent
   let sentLayout: { body: Body; slot: number }[] = [];
@@ -319,7 +376,7 @@ export async function createFloaters( opts: {
     for ( const { body, slot } of sentLayout ) {
 
       if ( ! bodies.includes( body ) || batch <= body.since ) continue;
-      body.water.set( probe.result.subarray( slot * 4, ( slot + pointsOf( body ).length ) * 4 ) );
+      body.water.set( probe.result.subarray( slot * 4, ( slot + body.points.length ) * 4 ) );
 
     }
 
@@ -332,7 +389,7 @@ export async function createFloaters( opts: {
     const layout: { body: Body; slot: number }[] = [];
     for ( const body of bodies ) {
 
-      const points = pointsOf( body );
+      const points = body.points;
       if ( n + points.length > probe.capacity ) break;
       layout.push( { body, slot: n } );
       const t = body.rigid.translation(), r = body.rigid.rotation();
@@ -353,13 +410,12 @@ export async function createFloaters( opts: {
   };
 
   const force = { x: 0, y: 0, z: 0 }, at = { x: 0, y: 0, z: 0 };
+  const relative = new THREE.Vector3(), qInverse = new THREE.Quaternion();
   const applyWater = () => {
 
     for ( const body of bodies ) {
 
-      const spec = specs[ body.kind ];
-      const points = pointsOf( body );
-      const share = spec.volume / points.length;
+      const { points, share, extent, drag } = body;
       const t = body.rigid.translation(), r = body.rigid.rotation();
       q.set( r.x, r.y, r.z, r.w );
       body.rigid.resetForces( true );
@@ -370,22 +426,33 @@ export async function createFloaters( opts: {
         p.copy( local ).applyQuaternion( q ).add( t as THREE.Vector3Like );
         const height = body.water[ k * 4 ];
         // how much of the point's share is under the surface, 0 to 1
-        const f = THREE.MathUtils.clamp( ( height - p.y ) / ( 2 * spec.extent ) + 0.5, 0, 1 );
+        const f = THREE.MathUtils.clamp( ( height - p.y ) / ( 2 * extent ) + 0.5, 0, 1 );
         if ( f <= 0 ) return;
         wet += f;
         const displaced = WATER_DENSITY * share * f;
         // the point's own velocity: the body's plus its spin's, against the water's
         const v = body.rigid.velocityAtPoint( p );
-        const rx = v.x - body.water[ k * 4 + 1 ], ry = v.y - body.water[ k * 4 + 2 ], rz = v.z - body.water[ k * 4 + 3 ];
-        force.x = - displaced * DRAG.horizontal * rx;
-        force.y = displaced * G - displaced * DRAG.vertical * ry;
-        force.z = - displaced * DRAG.horizontal * rz;
+        relative.set( v.x - body.water[ k * 4 + 1 ], v.y - body.water[ k * 4 + 2 ], v.z - body.water[ k * 4 + 3 ] );
+        if ( drag ) {
+
+          // a hull's drag: in its own frame, then back to the world's
+          relative.applyQuaternion( qInverse.copy( q ).invert() );
+          relative.set( relative.x * drag.along, relative.y * drag.vertical, relative.z * drag.across ).applyQuaternion( q );
+
+        } else {
+
+          relative.set( relative.x * DRAG.horizontal, relative.y * DRAG.vertical, relative.z * DRAG.horizontal );
+
+        }
+        force.x = - displaced * relative.x;
+        force.y = displaced * G - displaced * relative.y;
+        force.z = - displaced * relative.z;
         at.x = p.x; at.y = p.y; at.z = p.z;
         body.rigid.addForceAtPoint( force, at, true );
 
       } );
-      // water damps spin far more than air
-      body.rigid.setAngularDamping( wet > 0 ? 1.2 : 0.2 );
+      // water damps spin far more than air (a hull's roll is damped by its own points' drag)
+      body.rigid.setAngularDamping( wet > 0 ? ( drag ? 0.5 : 1.2 ) : 0.2 );
       if ( body.falling && wet > 0 ) {
 
         body.falling = false;
@@ -442,7 +509,7 @@ export async function createFloaters( opts: {
   return {
     get count() {
 
-      return bodies.length;
+      return bodies.reduce( ( n, body ) => n + ( body.steer ? 0 : 1 ), 0 );
 
     },
     stats() {
@@ -451,7 +518,7 @@ export async function createFloaters( opts: {
         sent: probe.sent, received: probe.received,
         bodies: bodies.map( ( body ) => {
 
-          const t = body.rigid.translation(), n = pointsOf( body ).length;
+          const t = body.rigid.translation(), n = body.points.length;
           let water = 0;
           for ( let k = 0; k < n; k ++ ) water += body.water[ k * 4 ];
           return { kind: body.kind, x: + t.x.toFixed( 2 ), y: + t.y.toFixed( 3 ), z: + t.z.toFixed( 2 ), water: + ( water / n ).toFixed( 3 ) };
@@ -468,6 +535,7 @@ export async function createFloaters( opts: {
       while ( accumulator >= STEP ) {
 
         applyWater();
+        for ( const body of bodies ) body.steer?.( body.rigid, STEP );
         world.step();
         accumulator -= STEP;
 
@@ -475,7 +543,7 @@ export async function createFloaters( opts: {
       for ( const body of [ ...bodies ] ) {
 
         const t = body.rigid.translation();
-        if ( Math.hypot( t.x, t.z ) > DRIFT_LIMIT || t.y < sea - 40 ) remove( body );
+        if ( ! body.steer && ( Math.hypot( t.x, t.z ) > DRIFT_LIMIT || t.y < sea - 40 ) ) remove( body );
 
       }
       sync();
@@ -485,6 +553,27 @@ export async function createFloaters( opts: {
 
       spawn( pick(), x, sea + 5 + random() * 3, z, true );
       sync();
+
+    },
+    launch( vessel ) {
+
+      const { centreOfMass: c, inertia: i } = vessel;
+      const rigid = world.createRigidBody( RAPIER.RigidBodyDesc.dynamic()
+        .setTranslation( vessel.start.x, vessel.start.y, vessel.start.z )
+        .setRotation( new THREE.Quaternion().setFromAxisAngle( new THREE.Vector3( 0, 1, 0 ), vessel.heading ) )
+        .setAdditionalMassProperties( vessel.mass, { x: c.x, y: c.y, z: c.z }, { x: i.x, y: i.y, z: i.z }, { x: 0, y: 0, z: 0, w: 1 } )
+        .setLinearDamping( 0.02 ).setAngularDamping( 0.5 ).setCanSleep( false ) );
+      for ( const collider of vessel.colliders() ) world.createCollider( collider.setDensity( 0 ).setFriction( 0.5 ).setRestitution( 0.05 ), rigid );
+      vessel.object.name = vessel.name;
+      opts.group.add( vessel.object );
+      opts.onObject( vessel.object );
+      // first in the probe's batch, so its points are always sampled
+      bodies.unshift( {
+        kind: 'vessel', rigid, object: vessel.object, points: vessel.points, share: vessel.volume / vessel.points.length, extent: vessel.extent,
+        drag: vessel.drag, steer: vessel.steer, since: probe.sent, water: still( vessel.points.length ), falling: false,
+      } );
+      sync();
+      return rigid;
 
     },
   };

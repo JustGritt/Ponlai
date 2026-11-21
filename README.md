@@ -1,7 +1,8 @@
 ﻿# Lighthouse
 
 A sea stack with a lighthouse, far out in deep water, and the remains of a ship the storm drove onto
-it: its bow wedged against the rock, the rest of it afloat on the real waves. It is built on [Ponlai](https://github.com/HuberyLL/ponlai)'s physically based render
+it: its bow wedged against the rock, the rest of it afloat on the real waves. A fishing boat works
+the water round the rocks, gulls wheel over it all and mackerel school under the surface. It is built on [Ponlai](https://github.com/HuberyLL/ponlai)'s physically based render
 pipeline for three.js and WebGPU, with [Rapier](https://rapier.rs/) for the physics.
 
 - **The sea** is Ponlai's FFT ocean. The scene describes the rocks' shorelines to it
@@ -13,10 +14,23 @@ pipeline for three.js and WebGPU, with [Rapier](https://rapier.rs/) for the phys
   ribs, a faded painted wale, copper sheathing, a jagged break and stove-in planks), and the debris
   from the same hull and from spars, torn sailcloth, rope, the ship's wheel, hatch gratings,
   splintered planks and the cargo's barrels.
+- **The boat** (`src/boat.ts`) is a small double-ended fishing boat built from the wreck's parametric
+  hull: painted topsides, boot top and antifouling, a planked deck, a wheelhouse, a mast with its
+  boom and rigging, fish boxes, a heap of net, tyres for fenders. It floats on the same buoyancy as
+  the wreckage, drag low along its keel and high across it, so it pitches and rolls on the swell,
+  and its pilot follows a route round the stack planned clear of the rocks and the wreck
+  (`plotRoute`). By night its wheelhouse glows and its navigation lights burn.
+- **The gulls** (`src/gulls.ts`) are an instanced flock whose wings flap, glide and fold in the vertex
+  stage. They wheel round the lantern and the stacks and follow the boat, keep above the rocks,
+  and stand on the stacks' tops; at nightfall they all come down to roost until morning.
+- **The fish** (`src/fish.ts`) are schools of mackerel near the surface round the rocks, drawn with
+  Ponlai's fish mesh and material (`src/life/`) as swimmers seen through the waves. They school,
+  scatter from the boat, and now and then a few leap clear of the water.
 - **The sound** (`src/sound.ts`) starts on the first click or key press: the open sea, surf on each
-  rock (positional, so it swells as you near it), wind that rises with the camera, gulls by day, the
-  wreck's timbers creaking, and a splash where dropped wreckage lands. The clips in `public/audio`
-  were generated locally with Stable Audio and cut into seamless loops with ffmpeg.
+  rock (positional, so it swells as you near it), wind that rises with the camera, the gulls calling
+  by day (each call follows a gull in the scene), the boat's engine, the wreck's timbers creaking, and
+  a splash where dropped wreckage lands or a fish leaps. The clips in `public/audio` were generated
+  locally with Stable Audio and cut into seamless loops with ffmpeg.
 - **The wreckage** (`src/floaters.ts`) floats by buoyancy at sample points on each body, against the
   same surface the water draws, and collides with the rocks and the wedged bow. The waves exist only on the GPU, so a compute pass
   (`src/waveProbe.ts`) samples the ocean's displacement and orbital velocity at those points and reads
@@ -41,7 +55,8 @@ wind or a weather. `?glow.beam=5e-6` (and `glow.lamp`, `glow.lens`, `glow.window
 night's glows.
 
 In the browser console, `__LIGHTHOUSE__.floaters.stats()` lists every body's height against the
-water under it.
+water under it (the boat is the `vessel`); `__LIGHTHOUSE__.boat`, `.route`, `.gulls` and `.fish` hold
+the rest of the scene's life.
 
 ## Layout
 
@@ -49,10 +64,14 @@ water under it.
 | --- | --- |
 | `src/scene.ts` | The scene: assembles the stack, lighthouse and wreckage through Ponlai's `startScene` |
 | `src/rocks.ts` | The rocks' geometry, material and shoreline fields |
-| `src/sound.ts` | The soundscape: sea, surf, wind, gulls, creaks, splashes (clips in `public/audio`) |
+| `src/sound.ts` | The soundscape: sea, surf, wind, gulls, engine, creaks, splashes (clips in `public/audio`) |
+| `src/boat.ts` | The fishing boat: its geometry, materials and lights, its route and its pilot |
+| `src/gulls.ts` | The gulls: the bird's mesh and material, the flock's flight and roosting |
+| `src/fish.ts` | The mackerel schools and their leaps |
+| `src/life/` | Ponlai's fish mesh and material, from its island (`packages/island/life`) at `d5ad84b6` |
 | `src/lighthouse.ts` | The tower, lantern, cottage, lamp and beams |
 | `src/wreckage.ts` | The wreck's geometry and materials: the hull, the bow, the loose parts |
-| `src/floaters.ts` | The Rapier world and the floating wreckage |
+| `src/floaters.ts` | The Rapier world, the floating wreckage and the boat's hull in the water |
 | `src/waveProbe.ts` | The GPU wave sampler the physics reads |
 | `src/surfaces.ts` | The material setup every surface shares |
 | `src/render/`, `src/looks/ponlai/`, `tools/kit/` | Ponlai's render pipeline, look and tools, copied from Ponlai at `d5ad84b6` |

@@ -137,7 +137,7 @@ function frameAt( s: HullShape, u: number ) {
 }
 
 /** A point of the hull at u (0 to 1 along it) and t (-1 port gunwale, 0 keel, 1 starboard gunwale). */
-function hullPoint( s: HullShape, u: number, t: number, out = new THREE.Vector3() ): THREE.Vector3 {
+export function hullPoint( s: HullShape, u: number, t: number, out = new THREE.Vector3() ): THREE.Vector3 {
 
   const { half, depth, top } = frameAt( s, u );
   const a = t * Math.PI / 2;

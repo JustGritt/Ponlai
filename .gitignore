@@ -1,0 +1,4 @@
+node_modules/
+dist/
+# what the tools write (tools/project.mjs, output)
+artifacts/

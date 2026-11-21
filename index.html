@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Blank project</title>
+  <link rel="icon" href="data:," />
+  <style>
+    html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+    #app { position: fixed; inset: 0; }
+    #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #ccc; background: #000; }
+    #loading.done { opacity: 0; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+  <div id="loading">Loading…</div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

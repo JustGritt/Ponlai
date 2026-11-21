@@ -7,8 +7,9 @@
 // a flat plane. The surface comes from the GPU (waveProbe.ts) a frame or two late; between results
 // each point keeps the last height read for it.
 //
-// The stack and the wreck wedged against it are fixed triangle meshes in the same world, so the
-// wreckage knocks against them.
+// The rocks and the wreck wedged against the stack are fixed triangle meshes in the same world, so
+// the wreckage knocks against them. A piece dropped from above reports its splash as it meets the
+// water, for the sound.
 import * as THREE from 'three/webgpu';
 import RAPIER from '@dimforge/rapier3d-compat';
 import type { WaveProbe } from './waveProbe.ts';
@@ -56,6 +57,8 @@ interface Body {
   since: number;
   /** the latest surface under each sample point: height, vx, vy, vz */
   water: Float32Array;
+  /** dropped from above and not yet in the water */
+  falling: boolean;
 }
 
 export interface Floaters {
@@ -242,11 +245,15 @@ const DROPS: [ Kind, number ][] = [ [ 'plank', 5 ], [ 'hull', 2 ], [ 'barrel', 2
 /** The floating wreckage, its physics world and its pieces (added to `opts.group`). */
 export async function createFloaters( opts: {
   group: THREE.Group; probe: WaveProbe; sea: number; materials: WreckMaterials;
-  /** fixed triangle meshes in world space: the stack, the wreck */
+  /** fixed triangle meshes in world space: the rocks, the wreck */
   fixed: THREE.BufferGeometry[];
   /** where the wreck lies (radians about y from +x toward +z): the debris field spreads from there */
   wreckAngle: number;
+  /** whether the debris field may start a piece at x, z (clear of the rocks) */
+  clear: ( x: number, z: number ) => boolean;
   onObject: ( object: THREE.Object3D ) => void;
+  /** a dropped piece struck the water at x, y, z, falling at `speed` (m/s) */
+  onSplash?: ( x: number, y: number, z: number, speed: number ) => void;
 } ): Promise<Floaters> {
 
   await RAPIER.init();
@@ -269,7 +276,7 @@ export async function createFloaters( opts: {
   const p = new THREE.Vector3(), q = new THREE.Quaternion();
   const random = mulberry32( 2026 );
 
-  const spawn = ( kind: Kind, x: number, y: number, z: number ) => {
+  const spawn = ( kind: Kind, x: number, y: number, z: number, falling = false ) => {
 
     if ( bodies.length >= MAX_BODIES ) remove( bodies[ 0 ] );
     const spec = specs[ kind ];
@@ -291,7 +298,7 @@ export async function createFloaters( opts: {
     opts.onObject( object );
     const water = new Float32Array( v.points.length * 4 );
     for ( let k = 0; k < v.points.length; k ++ ) water[ k * 4 ] = sea;
-    bodies.push( { kind, variant, rigid, object, since: probe.sent, water } );
+    bodies.push( { kind, variant, rigid, object, since: probe.sent, water, falling } );
 
   };
 
@@ -379,6 +386,12 @@ export async function createFloaters( opts: {
       } );
       // water damps spin far more than air
       body.rigid.setAngularDamping( wet > 0 ? 1.2 : 0.2 );
+      if ( body.falling && wet > 0 ) {
+
+        body.falling = false;
+        opts.onSplash?.( t.x, t.y, t.z, Math.abs( body.rigid.linvel().y ) );
+
+      }
 
     }
 
@@ -403,8 +416,17 @@ export async function createFloaters( opts: {
   ];
   for ( const [ kind, count ] of field ) for ( let i = 0; i < count; i ++ ) {
 
-    const a = opts.wreckAngle + ( random() - 0.5 ) * 2.2, r = 15 + random() * 36;
-    spawn( kind, Math.cos( a ) * r, sea + 0.2, Math.sin( a ) * r );
+    // clear of the rocks (the whaleback and the skerries lie in the field)
+    let x = 0, z = 0;
+    for ( let tries = 0; tries < 20; tries ++ ) {
+
+      const a = opts.wreckAngle + ( random() - 0.5 ) * 2.2, r = 15 + random() * 36;
+      x = Math.cos( a ) * r;
+      z = Math.sin( a ) * r;
+      if ( opts.clear( x, z ) ) break;
+
+    }
+    spawn( kind, x, sea + 0.2, z );
 
   }
   sync();
@@ -461,7 +483,7 @@ export async function createFloaters( opts: {
     },
     drop( x: number, z: number ) {
 
-      spawn( pick(), x, sea + 5 + random() * 3, z );
+      spawn( pick(), x, sea + 5 + random() * 3, z, true );
       sync();
 
     },

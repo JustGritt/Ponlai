@@ -1,19 +1,24 @@
-# Lighthouse
+﻿# Lighthouse
 
 A sea stack with a lighthouse, far out in deep water, and the remains of a ship the storm drove onto
 it: its bow wedged against the rock, the rest of it afloat on the real waves. It is built on [Ponlai](https://github.com/HuberyLL/ponlai)'s physically based render
 pipeline for three.js and WebGPU, with [Rapier](https://rapier.rs/) for the physics.
 
-- **The sea** is Ponlai's FFT ocean. The scene describes the stack's shoreline to it
-  (`src/stack.ts`, `stackFields`), so the waves break and foam against the rock and calm in its lee.
+- **The sea** is Ponlai's FFT ocean. The scene describes the rocks' shorelines to it
+  (`src/rocks.ts`, `rockFields`): the stack, two lesser stacks, a stump, a whaleback, skerries and a
+  reef awash, so the waves break and foam against them and calm in their lee.
 - **The lighthouse** (`src/lighthouse.ts`) lights up by night: the lamp, the windows, a local light on
   the gallery and two beams that sweep through the air, timed by the sky's own night share.
 - **The wreck** (`src/wreckage.ts`) is built from code: the bow from a parametric hull (planking on
   ribs, a faded painted wale, copper sheathing, a jagged break and stove-in planks), and the debris
   from the same hull and from spars, torn sailcloth, rope, the ship's wheel, hatch gratings,
   splintered planks and the cargo's barrels.
+- **The sound** (`src/sound.ts`) starts on the first click or key press: the open sea, surf on each
+  rock (positional, so it swells as you near it), wind that rises with the camera, gulls by day, the
+  wreck's timbers creaking, and a splash where dropped wreckage lands. The clips in `public/audio`
+  were generated locally with Stable Audio and cut into seamless loops with ffmpeg.
 - **The wreckage** (`src/floaters.ts`) floats by buoyancy at sample points on each body, against the
-  same surface the water draws, and collides with the stack and the wedged bow. The waves exist only on the GPU, so a compute pass
+  same surface the water draws, and collides with the rocks and the wedged bow. The waves exist only on the GPU, so a compute pass
   (`src/waveProbe.ts`) samples the ocean's displacement and orbital velocity at those points and reads
   them back, one batch per frame.
 
@@ -43,7 +48,8 @@ water under it.
 | Path | What it holds |
 | --- | --- |
 | `src/scene.ts` | The scene: assembles the stack, lighthouse and wreckage through Ponlai's `startScene` |
-| `src/stack.ts` | The sea stack's geometry, rock material and shoreline fields |
+| `src/rocks.ts` | The rocks' geometry, material and shoreline fields |
+| `src/sound.ts` | The soundscape: sea, surf, wind, gulls, creaks, splashes (clips in `public/audio`) |
 | `src/lighthouse.ts` | The tower, lantern, cottage, lamp and beams |
 | `src/wreckage.ts` | The wreck's geometry and materials: the hull, the bow, the loose parts |
 | `src/floaters.ts` | The Rapier world and the floating wreckage |

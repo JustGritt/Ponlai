@@ -7,20 +7,26 @@ import {
 } from './render/index.ts';
 import { browserHost } from './render/browser.ts';
 import { ISLAND_LOOK } from './looks/ponlai/IslandLook.ts';
-import { STACK, stackFields, stackGeometry, stackMaterial, waterlineRadius } from './stack.ts';
+import { FLOOR, ROCKS, RockShape, STACK_TOP, rockFields, rockMaterial, shoreDistance } from './rocks.ts';
 import { createLighthouse, type Lighthouse } from './lighthouse.ts';
 import { WaveProbe } from './waveProbe.ts';
 import { createFloaters, type Floaters } from './floaters.ts';
 import { albedo, surface } from './surfaces.ts';
 import { bowWreck, wreckMaterials, type WreckMaterials } from './wreckage.ts';
+import { createSoundscape, type Soundscape, type SoundSources } from './sound.ts';
 
-// The scene: a sea stack with a lighthouse, far out in deep water, wreckage floating round it.
+// The scene: a sea stack with a lighthouse among lesser rocks, far out in deep water, a wreck on the
+// stack and its wreckage floating round it, and the sound of it all.
 // Ponlai's own look (exposure, haze, grading) is used as the island has it.
 
 // the fields round the stack: their half size and cells a side (1 m cells)
 const FIELD = { half: 96, cells: 192 };
 // the camera orbits this point (m above the sea)
-const TARGET_HEIGHT = 17;
+const TARGET_HEIGHT = STACK_TOP - 1.5;
+// how close (m) the camera may come to a rock's waterline below its top
+const CAMERA_CLEARANCE = 2;
+// whether the sound was turned off, kept for the next visit
+const MUTED_KEY = 'lighthouse.muted';
 // where the ship struck: the angle about the stack of the point its stem hit (radians from +x toward
 // +z; the first view looks at the stack from about 0.75), and how far the line it came in on turns
 // from straight at the rock (a glancing blow, so the first view sees the hull from the side)
@@ -29,32 +35,35 @@ const WRECK = { angle: 0.95, glance: - 1.05 };
 export async function startProject() {
 
   const host = browserHost( { canvasHost: document.getElementById( 'app' )!, loading: document.getElementById( 'loading' ) } );
-  let fields!: ReturnType<typeof stackFields>;
+  const rocks = ROCKS.map( ( rock ) => new RockShape( rock ) );
+  const main = rocks[ 0 ];
+  let fields!: ReturnType<typeof rockFields>;
   let fieldNodes!: { shore: THREE.TextureNode; floor: THREE.TextureNode };
   let world!: THREE.Group;
   let refracted!: THREE.ClippingGroup;
-  let stack!: THREE.Mesh;
+  let rockMeshes!: THREE.Mesh[];
   let lighthouse!: Lighthouse;
   let floaters: Floaters | null = null;
   let materials!: WreckMaterials;
   let wreck!: ReturnType<typeof bowWreck>;
   let controls!: OrbitControls;
+  let sound: Soundscape | null = null;
   let sea = 0;
 
   const running = await startScene( host, { look: ISLAND_LOOK, defaults: { hour: DAY_PRESETS.dusk, dayLength: 2880 } }, {
     afterSky( { render, shared } ) {
 
       sea = shared.waterLevel.value;
-      render.camera.position.set( 70, sea + 10, 66 );
+      render.camera.position.set( 64, sea + 9, 60 );
       render.camera.lookAt( 0, sea + TARGET_HEIGHT, 0 );
 
     },
     passes: ( { shared } ) => ( { rainCeiling: shared.waterLevel.value + 40, extraPasses: [] } ),
     ground( { shared } ) {
 
-      fields = stackFields( { ...FIELD, sea, xform: shared.shoreXform.value } );
+      fields = rockFields( { rocks, ...FIELD, sea, xform: shared.shoreXform.value } );
       fieldNodes = { shore: texture( fields.textures.shore ), floor: texture( fields.textures.floor ) };
-      return { fields: fieldNodes, shoreData: fields.shoreData, bounceGround: neutralBounceGround( { ground: sea + STACK.floor, albedo: [ 0.2, 0.2, 0.18 ] } ) };
+      return { fields: fieldNodes, shoreData: fields.shoreData, bounceGround: neutralBounceGround( { ground: sea + FLOOR, albedo: [ 0.2, 0.2, 0.18 ] } ) };
 
     },
     afterBounce( { render } ) {
@@ -64,22 +73,28 @@ export async function startProject() {
       // what reaches under the sea: the refraction's camera sees it below the waterline
       refracted = refractedGroup( sea );
       refracted.name = 'under and over the sea';
-      stack = new THREE.Mesh( stackGeometry( sea ), stackMaterial( render, sea ) );
-      stack.name = 'sea stack';
-      stack.castShadow = stack.receiveShadow = true;
-      showUnderwater( stack );
-      refracted.add( stack );
+      const rockSurface = rockMaterial( render, sea );
+      rockMeshes = rocks.map( ( rock ) => {
+
+        const mesh = new THREE.Mesh( rock.geometry( sea ), rockSurface );
+        mesh.name = rock.rock.name;
+        mesh.castShadow = mesh.receiveShadow = true;
+        showUnderwater( mesh );
+        refracted.add( mesh );
+        return mesh;
+
+      } );
       const floor = new THREE.Mesh( new THREE.CircleGeometry( 600, 64 ), surface( render, { name: 'sea floor', color: albedo( 0x6a6656 ), roughness: 0.95 } ) );
       floor.rotation.x = - Math.PI / 2;
-      floor.position.y = sea + STACK.floor;
+      floor.position.y = sea + FLOOR;
       floor.name = 'sea floor';
       floor.receiveShadow = true;
       showUnderwater( floor );
       refracted.add( floor );
-      lighthouse = createLighthouse( render, new THREE.Vector3( - 0.6, sea + STACK.top - 0.15, - 0.8 ) );
+      lighthouse = createLighthouse( render, new THREE.Vector3( - 0.6, sea + STACK_TOP - 0.15, - 0.8 ) );
       // the ship the storm drove onto the stack: its bow wedged against the rock
       materials = wreckMaterials( render, sea );
-      const stem = new THREE.Vector3( Math.cos( WRECK.angle ), 0, Math.sin( WRECK.angle ) ).multiplyScalar( waterlineRadius( WRECK.angle ) - 0.3 ).setY( sea + 2.2 );
+      const stem = new THREE.Vector3( Math.cos( WRECK.angle ), 0, Math.sin( WRECK.angle ) ).multiplyScalar( main.waterlineRadius( WRECK.angle ) - 0.3 ).setY( sea + 2.2 );
       wreck = bowWreck( materials, stem, Math.PI - WRECK.angle + WRECK.glance );
       wreck.group.traverse( showUnderwater );
       refracted.add( wreck.group );
@@ -91,10 +106,16 @@ export async function startProject() {
     ambient: () => ( { ambientData: neutralSeaLattice( { sea } ), world: { group: world } } ),
     afterAmbient( { render } ) {
 
-      // what casts into the sun's shadow map: the stack, the lighthouse and the water round them
-      const casters = new THREE.Box3().setFromObject( stack ).union( lighthouse.bounds() );
+      // what casts into the sun's shadow map: the stack, the lighthouse, the rocks near them and the
+      // water round them (the far stacks shade only themselves)
+      const casters = lighthouse.bounds();
+      rockMeshes.forEach( ( mesh, i ) => {
+
+        if ( Math.hypot( rocks[ i ].rock.x, rocks[ i ].rock.z ) < 36 ) casters.union( new THREE.Box3().setFromObject( mesh ) );
+
+      } );
       casters.min.y = sea - 2;
-      casters.expandByVector( new THREE.Vector3( 14, 0, 14 ) );
+      casters.expandByVector( new THREE.Vector3( 6, 0, 6 ) );
       render.sunShadow.setCasters( casters );
       // the lamp warms the gallery and the tower's top by night
       const lamp = lighthouse.lamp;
@@ -109,16 +130,23 @@ export async function startProject() {
       landBox: { x0: - 12, z0: - 12, x1: 12, z1: 12 },
       // no shelf: the floor's depth holds out to the horizon
       seaShape: { openSea: { from: 1e5, to: 2e5 }, reflectorTop: lighthouse.lamp.y + 4 },
-      // the sea reflects the wreck and the wreckage within these boxes
-      heldOpaque: [ new THREE.Box3( new THREE.Vector3( - 70, sea - 1, - 70 ), new THREE.Vector3( 70, sea + 3, 70 ) ), new THREE.Box3().setFromObject( wreck.group ) ],
+      // the sea reflects the wreck, the wreckage and the rocks within these boxes
+      heldOpaque: [
+        new THREE.Box3( new THREE.Vector3( - 70, sea - 1, - 70 ), new THREE.Vector3( 70, sea + 3, 70 ) ), new THREE.Box3().setFromObject( wreck.group ),
+        ...rockMeshes.slice( 1 ).map( ( mesh ) => new THREE.Box3().setFromObject( mesh ) ),
+      ],
     } ),
     async afterWater( { render, sizing } ) {
 
       sizing.resize();
       const probe = new WaveProbe( render, fieldNodes );
+      sound = createSoundscape( render.camera, soundSources( rocks, sea, wreck.group ), readMuted() );
+      soundButton( sound );
       floaters = await createFloaters( {
-        group: refracted, probe, sea, materials, fixed: [ stack.geometry, wreck.collider ], wreckAngle: WRECK.angle,
+        group: refracted, probe, sea, materials, fixed: [ ...rockMeshes.map( ( mesh ) => mesh.geometry ), wreck.collider ], wreckAngle: WRECK.angle,
+        clear: ( x, z ) => shoreDistance( rocks, x, z ) > 2.5,
         onObject: ( object ) => object.traverse( showUnderwater ),
+        onSplash: ( x, y, z, speed ) => sound?.splash( x, y, z, speed ),
       } );
       controls = orbit( render, sea );
       dropOnClick( render, sea, ( x, z ) => floaters?.drop( x, z ) );
@@ -135,9 +163,19 @@ export async function startProject() {
           afterDay() {
 
             controls?.update();
-            // never under the sea
+            const camera = render.camera.position;
+            // never under the sea, nor inside a rock
             const floorY = sea + 1.2;
-            if ( render.camera.position.y < floorY ) render.camera.position.y = floorY;
+            if ( camera.y < floorY ) camera.y = floorY;
+            for ( const rock of rocks ) {
+
+              const d = rock.distance( camera.x, camera.z );
+              if ( d >= CAMERA_CLEARANCE || camera.y > sea + rock.top + CAMERA_CLEARANCE ) continue;
+              const dx = camera.x - rock.rock.x, dz = camera.z - rock.rock.z, l = Math.hypot( dx, dz ) || 1;
+              camera.x += dx / l * ( CAMERA_CLEARANCE - d );
+              camera.z += dz / l * ( CAMERA_CLEARANCE - d );
+
+            }
 
           },
           afterWeather( dt: number ) {
@@ -147,6 +185,7 @@ export async function startProject() {
             lighthouse.night.value = night;
             lighthouse.update( shared.time.value );
             floaters?.update( dt );
+            sound?.update( dt, night, sea );
             hud( floaters?.count ?? 0 );
 
           },
@@ -158,6 +197,88 @@ export async function startProject() {
 
   presets( running.render );
   return running;
+
+}
+
+/** Where the scene's sounds come from: surf at each rock that has its own (round the main stack, at
+ * four points), the gulls round the lantern and over the outer stacks, the wreck's timbers. */
+function soundSources( rocks: readonly RockShape[], sea: number, wreck: THREE.Object3D ): SoundSources {
+
+  const surf: SoundSources[ 'surf' ] = [];
+  for ( const shape of rocks ) {
+
+    const { rock } = shape;
+    if ( rock.surf <= 0 ) continue;
+    // on the waterline: round the main stack, and on each other rock the side facing it (where the
+    // camera mostly is)
+    const angles = shape === rocks[ 0 ] ? [ 0.3, 1.9, 3.5, 5.0 ] : [ Math.atan2( - rock.z, - rock.x ) ];
+    for ( const angle of angles ) {
+
+      const r = shape.waterlineRadius( angle );
+      surf.push( { position: new THREE.Vector3( rock.x + Math.cos( angle ) * r, sea + 0.5, rock.z + Math.sin( angle ) * r ), gain: rock.surf } );
+
+    }
+
+  }
+  const above = ( name: string ) => {
+
+    const shape = rocks.find( ( r ) => r.rock.name === name )!;
+    return new THREE.Vector3( shape.rock.x, sea + shape.top + 8, shape.rock.z );
+
+  };
+  return {
+    surf,
+    roosts: [
+      { centre: new THREE.Vector3( 0, sea + STACK_TOP + 12, 0 ), radius: 24, weight: 3 },
+      { centre: above( 'sister stack' ), radius: 14, weight: 2 },
+      { centre: above( 'far stack' ), radius: 12, weight: 1 },
+    ],
+    wreck: new THREE.Box3().setFromObject( wreck ).getCenter( new THREE.Vector3() ),
+  };
+
+}
+
+function readMuted(): boolean {
+
+  try {
+
+    return localStorage.getItem( MUTED_KEY ) === '1';
+
+  } catch {
+
+    return false;
+
+  }
+
+}
+
+/** The sound's button: on or off, remembered. */
+function soundButton( sound: Soundscape ): void {
+
+  const button = document.getElementById( 'sound' );
+  if ( ! button ) return;
+  const show = () => {
+
+    button.textContent = sound.muted ? 'Sound: off' : 'Sound: on';
+    button.setAttribute( 'aria-pressed', String( ! sound.muted ) );
+
+  };
+  show();
+  button.addEventListener( 'click', () => {
+
+    sound.muted = ! sound.muted;
+    show();
+    try {
+
+      localStorage.setItem( MUTED_KEY, sound.muted ? '1' : '0' );
+
+    } catch {
+
+      // a private window may refuse; the choice then lasts this visit
+
+    }
+
+  } );
 
 }
 

@@ -33,6 +33,8 @@ export interface Rock {
   stretch: number; yaw: number;
   /** the radius within which its top stays flat (the main stack's, under the lighthouse); 0 for a crag */
   flat: number;
+  /** how far (radians) it leans over about its long axis: tilted beds, a lopsided crown */
+  lean: number;
   seed: number;
   /** the lathe's rings up the profile and segments round it */
   rings: number; segments: number;
@@ -79,23 +81,23 @@ export const ROCKS: Rock[] = [
       [ 16.5, FLOOR - 1 ], [ 13.6, - 20 ], [ 10.9, - 9 ], [ 9.0, - 3.5 ], [ 8.2, - 0.5 ], [ 7.9, 2.6 ], [ 7.6, 6 ],
       [ 7.3, 9.5 ], [ 6.9, 12.4 ], [ 6.6, 14.2 ], [ 6.2, 15.1 ], [ 4.5, STACK_TOP - 0.05 ], [ 0, STACK_TOP + 0.1 ],
     ],
-    relief: 1, stretch: 1, yaw: 0, flat: 6.5, seed: 7, rings: 150, segments: 180, apron: { depth: 1.5, length: 7 }, surf: 1,
+    relief: 1, stretch: 1, yaw: 0, flat: 6.5, lean: 0, seed: 7, rings: 150, segments: 180, apron: { depth: 1.5, length: 7 }, surf: 1,
   },
   // a lesser stack off the lighthouse's west side, another far beyond it, and the stump of a third
-  { name: 'sister stack', ...around( 2.75, 40 ), profile: crag( 4.3, 10.5, 0.72 ), relief: 0.8, stretch: 1.35, yaw: 0.5, flat: 0, seed: 11, rings: 90, segments: 120, apron: { depth: 1.2, length: 5 }, surf: 0.8 },
-  { name: 'far stack', ...around( - 2.0, 52 ), profile: crag( 3.6, 7.5, 0.7 ), relief: 0.75, stretch: 1.2, yaw: 1.9, flat: 0, seed: 13, rings: 70, segments: 96, apron: { depth: 1.2, length: 5 }, surf: 0.6 },
-  { name: 'stump', ...around( - 1.05, 34 ), profile: crag( 3.3, 4.2, 0.85 ), relief: 0.7, stretch: 1.5, yaw: 1.2, flat: 0, seed: 17, rings: 60, segments: 96, apron: { depth: 1, length: 4.5 }, surf: 0.7 },
+  { name: 'sister stack', ...around( 2.75, 40 ), profile: crag( 4.3, 10.5, 0.72 ), relief: 0.8, stretch: 1.35, yaw: 0.5, flat: 0, lean: 0.1, seed: 11, rings: 90, segments: 120, apron: { depth: 1.2, length: 5 }, surf: 0.8 },
+  { name: 'far stack', ...around( - 2.0, 52 ), profile: crag( 3.6, 7.5, 0.7 ), relief: 0.75, stretch: 1.2, yaw: 1.9, flat: 0, lean: - 0.14, seed: 13, rings: 70, segments: 96, apron: { depth: 1.2, length: 5 }, surf: 0.6 },
+  { name: 'stump', ...around( - 1.05, 34 ), profile: crag( 3.3, 4.2, 0.85 ), relief: 0.7, stretch: 1.5, yaw: 1.2, flat: 0, lean: 0.17, seed: 17, rings: 60, segments: 96, apron: { depth: 1, length: 4.5 }, surf: 0.7 },
   // a low whaleback of rock in the debris's path
-  { name: 'whaleback', ...around( 1.75, 30 ), profile: crag( 3.6, 2.4 ), relief: 0.6, stretch: 2, yaw: 0.2, flat: 0, seed: 19, rings: 44, segments: 96, apron: { depth: 1, length: 4 }, surf: 0.7 },
+  { name: 'whaleback', ...around( 1.75, 30 ), profile: crag( 3.6, 2.4 ), relief: 0.6, stretch: 2, yaw: 0.2, flat: 0, lean: 0.08, seed: 19, rings: 44, segments: 96, apron: { depth: 1, length: 4 }, surf: 0.7 },
   // skerries round the stack's foot: ( angle, distance, radius, top )
   ...( [ [ - 0.35, 15, 2.0, 1.5 ], [ - 0.05, 18.5, 1.3, 0.8 ], [ 2.3, 15, 2.4, 2.0 ], [ 3.5, 14.5, 2.2, 1.7 ], [ 4.4, 16, 1.6, 1.0 ] ] as const ).map( ( [ angle, distance, radius, top ], i ): Rock => ( {
     name: `skerry ${ i + 1 }`, ...around( angle, distance ), profile: crag( radius, top ), relief: 0.5, stretch: 1.3 + ( i % 3 ) * 0.2, yaw: angle * 2.1,
-    flat: 0, seed: 23 + i, rings: 32, segments: 56, apron: { depth: 0.8, length: 3 }, surf: i === 0 || i === 2 ? 0.6 : 0,
+    flat: 0, lean: ( i % 2 ? - 1 : 1 ) * ( 0.12 + i * 0.03 ), seed: 23 + i, rings: 32, segments: 56, apron: { depth: 0.8, length: 3 }, surf: i === 0 || i === 2 ? 0.6 : 0,
   } ) ),
   // a reef awash, the sea breaking over it
   ...( [ [ - 0.45, 44, 1.6, 0.7 ], [ - 0.55, 48.5, 1.1, 0.4 ], [ - 0.63, 52, 1.8, 0.9 ], [ - 0.71, 55.5, 1.0, 0.35 ] ] as const ).map( ( [ angle, distance, radius, top ], i ): Rock => ( {
     name: `reef ${ i + 1 }`, ...around( angle, distance ), profile: crag( radius, top ), relief: 0.4, stretch: 1.4 + ( i % 2 ) * 0.4, yaw: 0.9 + i,
-    flat: 0, seed: 31 + i, rings: 24, segments: 40, apron: { depth: 0.6, length: 3 }, surf: i === 1 ? 0.8 : 0,
+    flat: 0, lean: ( i % 2 ? - 0.15 : 0.15 ), seed: 31 + i, rings: 24, segments: 40, apron: { depth: 0.6, length: 3 }, surf: i === 1 ? 0.8 : 0,
   } ) ),
 ];
 
@@ -117,25 +119,21 @@ function mulberry32( seed: number ) {
 // the waterline's radius is tabled at this many angles round the axis
 const WATERLINE_STEPS = 720;
 
-/** A rock's shape: its waterline, its distance field and its mesh. */
+/** A rock's shape: its mesh, the waterline measured on it, and its distance field. */
 export class RockShape {
 
   readonly top: number;
   private readonly noise: SimplexNoise;
   private readonly waterline = new Float32Array( WATERLINE_STEPS );
+  /** the mesh about its own axis, the mean sea at y = 0 */
+  private readonly local: THREE.BufferGeometry;
 
   constructor( readonly rock: Rock ) {
 
     this.top = rock.profile[ rock.profile.length - 1 ][ 1 ];
     this.noise = new SimplexNoise( { random: mulberry32( rock.seed ) } );
-    const r0 = this.profileRadiusAt( 0 );
-    for ( let i = 0; i < WATERLINE_STEPS; i ++ ) {
-
-      const theta = i / WATERLINE_STEPS * 2 * Math.PI - Math.PI;
-      const x = Math.cos( theta ) * r0, z = Math.sin( theta ) * r0;
-      this.waterline[ i ] = r0 * this.stretchAt( theta ) + this.offset( x, 0, z, r0 );
-
-    }
+    this.local = this.build();
+    this.measureWaterline();
 
   }
 
@@ -161,6 +159,17 @@ export class RockShape {
 
   /** The rock's geometry in world space, with the mean sea at y = `sea`. */
   geometry( sea: number ): THREE.BufferGeometry {
+
+    const geometry = this.local.clone().translate( this.rock.x, sea, this.rock.z );
+    geometry.computeBoundingBox();
+    geometry.computeBoundingSphere();
+    return geometry;
+
+  }
+
+  /** The mesh: the lathe, stretched, pushed out by the relief, a crag's crown broken and the whole
+   * crag jostled by a 3D noise (so it reads as broken stone, not a turned one) and leaned over. */
+  private build(): THREE.BufferGeometry {
 
     const { rock } = this;
     let geometry: THREE.BufferGeometry = new THREE.LatheGeometry( lathePoints( rock.profile, rock.rings ), rock.segments );
@@ -191,16 +200,61 @@ export class RockShape {
       } else {
 
         // a crag's crown: broken, not turned
-        v.y += this.noise.noise3d( v.x * 0.5 / s, 7, v.z * 0.5 / s ) * 0.3 * s * THREE.MathUtils.smoothstep( v.y, this.top - 2.5 * s, this.top );
+        v.y += this.noise.noise3d( v.x * 0.5 / s, 7, v.z * 0.5 / s ) * 0.5 * s * THREE.MathUtils.smoothstep( v.y, this.top - 2.5 * s, this.top );
+        // and the whole of it jostled in three dimensions, which breaks the lathe's symmetry
+        const f = 0.3 / s, a = 0.8 * s;
+        v.x += this.noise.noise3d( v.x * f + 11.3, v.y * f, v.z * f ) * a;
+        v.y += this.noise.noise3d( v.x * f, v.y * f + 5.7, v.z * f + 3.1 ) * a * 0.6;
+        v.z += this.noise.noise3d( v.x * f + 7.9, v.y * f + 2.2, v.z * f ) * a;
 
       }
-      position.setXYZ( i, v.x + rock.x, v.y + sea, v.z + rock.z );
+      position.setXYZ( i, v.x, v.y, v.z );
 
     }
+    if ( rock.lean !== 0 ) geometry.applyMatrix4( new THREE.Matrix4().makeRotationAxis( new THREE.Vector3( Math.cos( rock.yaw ), 0, Math.sin( rock.yaw ) ), rock.lean ) );
     geometry.computeVertexNormals();
-    geometry.computeBoundingBox();
-    geometry.computeBoundingSphere();
     return geometry;
+
+  }
+
+  /** The waterline's radius round the axis, where the mesh's edges cross the mean sea: the farthest
+   * crossing at each angle, the angles no edge crosses filled between their neighbours. */
+  private measureWaterline(): void {
+
+    const position = this.local.attributes.position as THREE.BufferAttribute;
+    const index = this.local.index!.array;
+    const table = this.waterline.fill( - 1 );
+    const cross = ( a: number, b: number ) => {
+
+      const ya = position.getY( a ), yb = position.getY( b );
+      if ( ( ya > 0 ) === ( yb > 0 ) ) return;
+      const t = ya / ( ya - yb );
+      const x = position.getX( a ) + ( position.getX( b ) - position.getX( a ) ) * t;
+      const z = position.getZ( a ) + ( position.getZ( b ) - position.getZ( a ) ) * t;
+      const bin = Math.round( ( Math.atan2( z, x ) + Math.PI ) / ( 2 * Math.PI ) * WATERLINE_STEPS ) % WATERLINE_STEPS;
+      table[ bin ] = Math.max( table[ bin ], Math.hypot( x, z ) );
+
+    };
+    for ( let k = 0; k < index.length; k += 3 ) {
+
+      cross( index[ k ], index[ k + 1 ] );
+      cross( index[ k + 1 ], index[ k + 2 ] );
+      cross( index[ k + 2 ], index[ k ] );
+
+    }
+    const filled: number[] = [];
+    table.forEach( ( r, i ) => {
+
+      if ( r >= 0 ) filled.push( i );
+
+    } );
+    for ( let n = 0; n < filled.length; n ++ ) {
+
+      const i0 = filled[ n ], i1 = filled[ ( n + 1 ) % filled.length ];
+      const span = ( ( i1 - i0 ) + WATERLINE_STEPS ) % WATERLINE_STEPS || WATERLINE_STEPS;
+      for ( let k = 1; k < span; k ++ ) table[ ( i0 + k ) % WATERLINE_STEPS ] = table[ i0 ] + ( table[ i1 ] - table[ i0 ] ) * k / span;
+
+    }
 
   }
 
@@ -216,13 +270,15 @@ export class RockShape {
     const medium = n.noise3d( x * 0.18 / s, y * 0.2 / s, z * 0.18 / s ) * 0.6 * s;
     const fine = n.noise3d( x * 0.7 / s, y * 0.9 / s, z * 0.7 / s ) * 0.14 * s;
     // vertical joints: grooves and buttresses stretched up the cliff
-    const joints = Math.abs( n.noise3d( x * 0.32 / s, y * 0.035 / s, z * 0.32 / s ) ) * - 1.1 * s;
+    const crown = rock.flat > 0 ? 0 : THREE.MathUtils.smoothstep( y, this.top - 1.5 * s, this.top );
+    const joints = Math.abs( n.noise3d( x * 0.32 / s, y * 0.035 / s, z * 0.32 / s ) ) * - 1.1 * s * ( 1 - 0.8 * crown );
     // layers: each bed juts out at its base and recedes upward (a sawtooth), the beds of uneven
     // thickness and the ledges stronger in some places than others
     const bed = ( y + n.noise3d( x * 0.08 / s, y * 0.05 / s, z * 0.08 / s ) * 1.4 * s ) / ( 3.1 * s );
     const strength = THREE.MathUtils.clamp( 0.5 + n.noise3d( x * 0.05 / s, y * 0.03 / s + 9, z * 0.05 / s ), 0, 1 );
     const layer = Math.pow( 1 - ( bed - Math.floor( bed ) ), 2 ) * 0.5 * s * strength;
-    return ( large + medium + fine + joints + layer ) * cliff;
+    // on a crag's crown it fades: grown from the apex outward it would rib the crown like petals
+    return ( large + medium + fine + joints + layer ) * cliff * ( 1 - 0.7 * crown );
 
   }
 
@@ -235,19 +291,6 @@ export class RockShape {
     const a = Math.sqrt( stretch ), b = 1 / a;
     const c = Math.cos( theta - yaw ), s = Math.sin( theta - yaw );
     return 1 / Math.sqrt( ( c / a ) ** 2 + ( s / b ) ** 2 );
-
-  }
-
-  private profileRadiusAt( y: number ): number {
-
-    const { profile } = this.rock;
-    for ( let i = 1; i < profile.length; i ++ ) {
-
-      const [ r0, y0 ] = profile[ i - 1 ], [ r1, y1 ] = profile[ i ];
-      if ( y <= y1 ) return r0 + ( r1 - r0 ) * ( y - y0 ) / ( y1 - y0 );
-
-    }
-    return 0;
 
   }
 

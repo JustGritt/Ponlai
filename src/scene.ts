@@ -3,7 +3,7 @@ import { texture } from 'three/tsl';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   startScene, neutralBounceGround, neutralSeaLattice, refractedGroup, showUnderwater, duskForce, nightGlowShare, DAY_PRESETS,
-  type DayPreset, type RenderParts,
+  type RenderParts,
 } from './render/index.ts';
 import { browserHost } from './render/browser.ts';
 import { ISLAND_LOOK } from './looks/ponlai/IslandLook.ts';
@@ -16,11 +16,11 @@ import { bowWreck, wreckMaterials, type WreckMaterials } from './wreckage.ts';
 import { createSoundscape, type Soundscape, type SoundSources } from './sound.ts';
 import { createBoat, plotRoute, type Boat } from './boat.ts';
 import { createGulls, findPerches, type Gulls, type Orbit } from './gulls.ts';
-import { createFish, type Fish } from './fish.ts';
+import { presetButtons, readMuted, setUpPage, showStatus, soundButton } from './page.ts';
 
 // The scene: a sea stack with a lighthouse among lesser rocks, far out in deep water, a wreck on the
 // stack and its wreckage floating round it, a fishing boat working round the rocks, gulls over it
-// all and mackerel under the surface, and the sound of it all.
+// all, and the sound of it all.
 // Ponlai's own look (exposure, haze, grading) is used as the island has it.
 
 // the fields round the stack: their half size and cells a side (1 m cells)
@@ -41,6 +41,7 @@ const BOAT_START = 0.3;
 
 export async function startProject() {
 
+  setUpPage( 'lighthouse', 'Drag to orbit · scroll to zoom · click the sea to drop wreckage' );
   const host = browserHost( { canvasHost: document.getElementById( 'app' )!, loading: document.getElementById( 'loading' ) } );
   const rocks = ROCKS.map( ( rock ) => new RockShape( rock ) );
   const main = rocks[ 0 ];
@@ -57,7 +58,6 @@ export async function startProject() {
   let sound: Soundscape | null = null;
   let boat: Boat | null = null;
   let gulls: Gulls | null = null;
-  let fish: Fish | null = null;
   let sea = 0;
 
   const running = await startScene( host, { look: ISLAND_LOOK, defaults: { hour: DAY_PRESETS.dusk, dayLength: 2880 } }, {
@@ -171,19 +171,13 @@ export async function startProject() {
         ceiling: ceiling( rocks, sea, lighthouse.lamp, wreckBox, boat ),
       } );
       world.add( gulls.mesh );
-      // the mackerel round the rocks, shy of the boat
-      fish = createFish( render, {
-        sea, shore: ( x, z ) => shoreDistance( rocks, x, z ), threat: boat.position,
-        onSplash: ( x, y, z ) => sound?.splash( x, y, z, 3, 0.22 ),
-      } );
-      world.add( fish.mesh );
-      sound = createSoundscape( render.camera, soundSources( rocks, sea, wreck.group, gulls, boat ), readMuted() );
-      soundButton( sound );
+      sound = createSoundscape( render.camera, soundSources( rocks, sea, wreck.group, gulls, boat ), readMuted( MUTED_KEY ) );
+      soundButton( sound, MUTED_KEY );
       controls = orbit( render, sea );
       dropOnClick( render, sea, ( x, z ) => floaters?.drop( x, z ) );
       // for the console and the tools: `__LIGHTHOUSE__.floaters.stats()`
       ( window as unknown as { __LIGHTHOUSE__: unknown } ).__LIGHTHOUSE__ = {
-        floaters, probe, controls, camera: render.camera, boat, route, gulls, fish, shore: ( x: number, z: number ) => shoreDistance( rocks, x, z ),
+        floaters, probe, controls, camera: render.camera, boat, route, gulls, shore: ( x: number, z: number ) => shoreDistance( rocks, x, z ),
       };
 
     },
@@ -226,9 +220,8 @@ export async function startProject() {
 
             }
             gulls?.update( dt, night );
-            fish?.update( dt, night );
             sound?.update( dt, night, sea );
-            hud( floaters?.count ?? 0 );
+            showStatus( `${ floaters?.count ?? 0 } afloat` );
 
           },
         } ),
@@ -237,7 +230,7 @@ export async function startProject() {
     },
   } );
 
-  presets( running.render );
+  presetButtons( running.render );
   return running;
 
 }
@@ -309,50 +302,6 @@ function ceiling( rocks: readonly RockShape[], sea: number, lamp: THREE.Vector3,
 
 }
 
-function readMuted(): boolean {
-
-  try {
-
-    return localStorage.getItem( MUTED_KEY ) === '1';
-
-  } catch {
-
-    return false;
-
-  }
-
-}
-
-/** The sound's button: on or off, remembered. */
-function soundButton( sound: Soundscape ): void {
-
-  const button = document.getElementById( 'sound' );
-  if ( ! button ) return;
-  const show = () => {
-
-    button.textContent = sound.muted ? 'Sound: off' : 'Sound: on';
-    button.setAttribute( 'aria-pressed', String( ! sound.muted ) );
-
-  };
-  show();
-  button.addEventListener( 'click', () => {
-
-    sound.muted = ! sound.muted;
-    show();
-    try {
-
-      localStorage.setItem( MUTED_KEY, sound.muted ? '1' : '0' );
-
-    } catch {
-
-      // a private window may refuse; the choice then lasts this visit
-
-    }
-
-  } );
-
-}
-
 /** Drag to orbit the stack, scroll to zoom. */
 function orbit( render: RenderParts, sea: number ): OrbitControls {
 
@@ -392,26 +341,5 @@ function dropOnClick( render: RenderParts, sea: number, drop: ( x: number, z: nu
     drop( hit.x, hit.z );
 
   } );
-
-}
-
-let shownCount = - 1;
-function hud( count: number ): void {
-
-  if ( count === shownCount ) return;
-  shownCount = count;
-  const el = document.getElementById( 'count' );
-  if ( el ) el.textContent = `${ count } afloat`;
-
-}
-
-/** The time-of-day buttons. */
-function presets( render: RenderParts ): void {
-
-  for ( const button of document.querySelectorAll<HTMLButtonElement>( '[data-preset]' ) ) {
-
-    button.addEventListener( 'click', () => void render.setPreset( button.dataset.preset as DayPreset ) );
-
-  }
 
 }

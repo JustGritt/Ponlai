@@ -17,13 +17,15 @@
       padding: 4px 10px; cursor: pointer; }
     #hud button:hover { background: rgba(255, 255, 255, 0.2); }
     #count { margin-left: 6px; opacity: 0.7; font-variant-numeric: tabular-nums; }
+    #scenes a { color: inherit; opacity: 0.85; margin-left: 6px; }
+    #scenes a:hover { opacity: 1; }
   </style>
 </head>
 <body>
   <div id="app"></div>
   <div id="loading">Loading…</div>
   <div id="hud">
-    <p>Drag to orbit · scroll to zoom · click the sea to drop wreckage</p>
+    <p id="help"></p>
     <div class="row">
       <button data-preset="noon">Noon</button>
       <button data-preset="sunset">Sunset</button>
@@ -31,6 +33,7 @@
       <button data-preset="midnight">Midnight</button>
       <button id="sound" aria-pressed="true">Sound: on</button>
       <span id="count"></span>
+      <span id="scenes"></span>
     </div>
   </div>
   <script type="module" src="/src/main.ts"></script>

@@ -18,9 +18,10 @@ type V4 = THREE.Node<'vec4'>;
 
 // The material of a fish drawn from instances (Wenyao.ts), its look by its skin table.
 //
-// Copied from Ponlai's island (packages/island/life/FishMaterial.ts at d5ad84b6) for the scene's
-// mackerel (src/fish.ts); the one change: a skin can take its head's colour over the back alone
-// (`Skin.headOver`), as a mackerel's head is dark above and silver below.
+// Copied from Ponlai's island (packages/island/life/FishMaterial.ts at d5ad84b6) for the waterfall's
+// salmon (src/falls/salmon.ts); two changes: a skin can take its head's colour over the back alone
+// (`Skin.headOver`), and can show less of the flank's silver (`Skin.silver`), as a spawning
+// salmon's red flank shows little.
 //
 // The vertex stage poses the model (tidewater's swimVertex: a travelling wave down the body that
 // grows toward the tail, and the turning bend) and folds its wings: each ray of a paired fin turns
@@ -48,6 +49,9 @@ export interface Skin {
 	headEnd: number; snoutEnd: number;
 	// where the head's colour lies: over all of the head (the default), or over its back alone
 	headOver?: 'all' | 'back';
+	// how much of the flank's guanine silver it shows (1 the default; a spawning salmon's red flank
+	// little)
+	silver?: number;
 	// the eye: its place along the fish and height (fractions of the total length) and radius
 	eye: { u: number; y: number; r: number };
 }
@@ -143,7 +147,7 @@ export function makeFishMaterial( S: Anatomy, skin: Skin, shared: Shared, waveMa
 	const finColor = mix( c( skin.fin ), c( skin.finEdge ), smoothstep( 0.45, 1, aData.z ) ).mul( mix( 0.78, 1, smoothstep( 0.05, 0.22, ray ) ) );
 	mat.colorNode = select( body, skinColor, finColor );
 	// the guanine's silver on the flank, little on the back and none on the fins
-	const silver = smoothstep( - 0.8, - 0.1, h ).mul( float( 1 ).sub( backShare.mul( 0.75 ) ) ).mul( float( 1 ).sub( head.mul( 0.6 ) ) );
+	const silver = smoothstep( - 0.8, - 0.1, h ).mul( float( 1 ).sub( backShare.mul( 0.75 ) ) ).mul( float( 1 ).sub( head.mul( 0.6 ) ) ).mul( skin.silver ?? 1 );
 	mat.metalnessNode = select( body, silver.mul( 0.55 ), float( 0 ) );
 	mat.roughnessNode = select( body, mix( float( 0.42 ), float( 0.26 ), silver ), float( 0.5 ) );
 

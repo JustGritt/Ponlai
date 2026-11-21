@@ -1,15 +1,15 @@
 // The scene's sound: the open sea all round, surf on the rocks, the wind (more of it the higher the
 // camera), the gulls calling by day, the fishing boat's engine, the wreck's timbers creaking, and a
-// splash where dropped wreckage meets the water or a fish leaps.
+// splash where dropped wreckage meets the water.
 //
 // The clips are generated (public/audio; the README says how) and mixed here with Web Audio through
 // three's listener on the camera. The surf, the gulls, the engine, the creaks and the splashes are
 // positional, each through an HRTF panner that falls off with distance, so the surf swells as the
 // camera nears a rock; the sea and the wind are not. A gull's call comes from one of the gulls in
 // the scene (gulls.ts) and follows it as it flies; the engine follows the boat and opens up with
-// its throttle. The panners are placed directly rather than through the scene graph. Browsers start audio only after a
-// gesture: the context resumes on the first pointer or key press, and sleeps while the tab is hidden.
+// its throttle. The listener, the panners and the one-shot voices are audio.ts's.
 import * as THREE from 'three/webgpu';
+import { Voices, createAudioRig, pick, random } from './audio.ts';
 
 const CLIPS = {
   ocean: 'ocean', surf: 'surf', wind: 'wind', engine: 'engine',
@@ -44,104 +44,15 @@ export interface Soundscape {
   /** follows the camera and plays the gulls and creaks; `night` is the sky's night share, 0 to 1 */
   update( dt: number, night: number, seaLevel: number ): void;
   /** a splash at x, y, z where something struck the water at `speed` (m/s); `size` scales it
-   * down for something small (a fish: about 0.2) */
+   * down for something small (about 0.2 for a fish's) */
   splash( x: number, y: number, z: number, speed: number, size?: number ): void;
   muted: boolean;
 }
 
-const random = ( a: number, b: number ) => a + Math.random() * ( b - a );
-const pick = <T>( list: readonly T[] ) => list[ Math.floor( Math.random() * list.length ) ];
-
 export function createSoundscape( camera: THREE.Camera, sources: SoundSources, muted: boolean ): Soundscape {
 
-  const listener = new THREE.AudioListener();
-  camera.add( listener );
-  const context = listener.context;
-  // a gentle compressor on the master, so a splash close by does not clip over the surf
-  const compressor = context.createDynamicsCompressor();
-  compressor.threshold.value = - 14;
-  compressor.knee.value = 12;
-  compressor.ratio.value = 3;
-  compressor.attack.value = 0.01;
-  compressor.release.value = 0.3;
-  listener.gain.disconnect();
-  listener.gain.connect( compressor ).connect( context.destination );
-  listener.gain.gain.value = muted ? 0 : 1;
-
-  // start on the first gesture; sleep while hidden
-  let started = false;
-  const resume = () => {
-
-    started = true;
-    if ( context.state !== 'running' && ! document.hidden ) void context.resume();
-
-  };
-  window.addEventListener( 'pointerdown', resume );
-  window.addEventListener( 'keydown', resume );
-  document.addEventListener( 'visibilitychange', () => {
-
-    if ( document.hidden ) void context.suspend();
-    else if ( started ) void context.resume();
-
-  } );
-
-  /** places a panner at p now, or glides it there over `glide` seconds */
-  const place = ( audio: THREE.PositionalAudio, p: THREE.Vector3, glide = 0 ) => {
-
-    const t = context.currentTime;
-    const { positionX, positionY, positionZ } = audio.panner;
-    for ( const [ param, value ] of [ [ positionX, p.x ], [ positionY, p.y ], [ positionZ, p.z ] ] as const ) {
-
-      if ( glide > 0 ) {
-
-        param.linearRampToValueAtTime( value, t + glide );
-
-      } else {
-
-        param.cancelScheduledValues( t );
-        param.setValueAtTime( value, t );
-
-      }
-
-    }
-
-  };
-
-  const positional = ( ref: number, rolloff: number ) => {
-
-    const audio = new THREE.PositionalAudio( listener );
-    audio.setRefDistance( ref );
-    audio.setRolloffFactor( rolloff );
-    audio.setDistanceModel( 'inverse' );
-    audio.setMaxDistance( 4000 );
-    return audio;
-
-  };
-
-  // a few voices for each kind of one-shot, reused in turn
-  class Voices {
-
-    private readonly voices: THREE.PositionalAudio[];
-    private next = 0;
-    constructor( count: number, ref: number, rolloff: number ) {
-
-      this.voices = Array.from( { length: count }, () => positional( ref, rolloff ) );
-
-    }
-    play( buffer: AudioBuffer, at: THREE.Vector3, volume: number, rate: number ): THREE.PositionalAudio {
-
-      const audio = this.voices[ this.next ++ % this.voices.length ];
-      if ( audio.isPlaying ) audio.stop();
-      audio.setBuffer( buffer );
-      audio.setVolume( volume );
-      audio.setPlaybackRate( rate );
-      audio.play();
-      place( audio, at );
-      return audio;
-
-    }
-
-  }
+  const rig = createAudioRig( camera, muted );
+  const { context, place, positional } = rig;
 
   let layers: {
     ocean: THREE.Audio; wind: THREE.Audio; engine: THREE.PositionalAudio;
@@ -149,24 +60,13 @@ export function createSoundscape( camera: THREE.Camera, sources: SoundSources, m
     gullVoices: Voices; creakVoices: Voices; splashVoices: Voices;
   } | null = null;
 
-  const loader = new THREE.AudioLoader();
-  const base = new URL( 'audio/', document.baseURI ).href;
-  const load = ( name: string ) => loader.loadAsync( `${ base }${ name }.ogg` );
+  const load = rig.load;
   void Promise.all( [
     load( CLIPS.ocean ), load( CLIPS.surf ), load( CLIPS.wind ), load( CLIPS.engine ),
     Promise.all( CLIPS.gulls.map( load ) ), Promise.all( CLIPS.creaks.map( load ) ), Promise.all( CLIPS.splashes.map( load ) ),
   ] ).then( ( [ ocean, surf, wind, engineClip, gulls, creaks, splashes ] ) => {
 
-    const loop = ( buffer: AudioBuffer, volume: number ) => {
-
-      const audio = new THREE.Audio( listener ).setBuffer( buffer );
-      audio.setLoop( true );
-      audio.setVolume( volume );
-      audio.offset = Math.random() * buffer.duration;
-      audio.play();
-      return audio;
-
-    };
+    const loop = ( buffer: AudioBuffer, volume: number ) => rig.loop( buffer, volume ) as THREE.Audio;
     // the surf: one loop at each source, each at its own rate and point in the clip so none beat together
     for ( const source of sources.surf ) {
 
@@ -189,7 +89,7 @@ export function createSoundscape( camera: THREE.Camera, sources: SoundSources, m
     layers = {
       ocean: loop( ocean, MIX.ocean ), wind: loop( wind, MIX.wind.low ), engine,
       gulls, creaks, splashes,
-      gullVoices: new Voices( 3, 14, 1 ), creakVoices: new Voices( 2, 7, 1.3 ), splashVoices: new Voices( 3, 8, 1 ),
+      gullVoices: new Voices( rig, 3, 14, 1 ), creakVoices: new Voices( rig, 2, 7, 1.3 ), splashVoices: new Voices( rig, 3, 8, 1 ),
     };
 
   } ).catch( ( error ) => console.warn( 'sound: the clips did not load', error ) );
@@ -212,13 +112,12 @@ export function createSoundscape( camera: THREE.Camera, sources: SoundSources, m
   return {
     get muted() {
 
-      return muted;
+      return rig.muted;
 
     },
     set muted( value: boolean ) {
 
-      muted = value;
-      listener.gain.gain.setTargetAtTime( muted ? 0 : 1, context.currentTime, 0.15 );
+      rig.muted = value;
 
     },
     update( dt, night, seaLevel ) {

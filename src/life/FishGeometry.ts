@@ -9,7 +9,7 @@ import * as THREE from 'three/webgpu';
 // A fish's mesh from its anatomy table: a lofted body and fins as membranes between rays.
 //
 // Copied unchanged from Ponlai's island (packages/island/life/FishGeometry.ts at d5ad84b6), for the
-// scene's mackerel (src/fish.ts).
+// waterfall's salmon (src/falls/salmon.ts).
 //
 // A fish's mesh from its anatomy table (tidewater's FishGeometry, 4811ba4: the body lofted from
 // superellipse rings, the fins as membranes between rays), cut to what a swimming fish seen from

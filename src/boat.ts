@@ -34,6 +34,9 @@ const L = HULL.length;
 // the deck's height, and the waterline's when the boat floats level (the boat's frame)
 const DECK = - 0.3;
 const WATERLINE = - 0.75;
+/** where a person on deck stands to look out (the boat's frame): at the starboard rail forward of the
+ * wheelhouse, at a standing eye's height, clear of the boom over the deck's middle */
+export const EYE = new THREE.Vector3( - 0.15, DECK + 1.6, 0.95 );
 // the physics: kg, the water it displaces with every point under (m^3, so that it floats with the
 // points' middles on the waterline), the points' vertical extent, and the drag in its frame
 const MASS = 5500;

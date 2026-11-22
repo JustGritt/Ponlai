@@ -14,9 +14,9 @@ import { createFloaters, type Floaters } from './floaters.ts';
 import { albedo, surface } from './surfaces.ts';
 import { bowWreck, wreckMaterials, type WreckMaterials } from './wreckage.ts';
 import { createSoundscape, type Soundscape, type SoundSources } from './sound.ts';
-import { createBoat, plotRoute, type Boat } from './boat.ts';
+import { createBoat, plotRoute, EYE, type Boat } from './boat.ts';
 import { createGulls, findPerches, type Gulls, type Orbit } from './gulls.ts';
-import { graphicsControls, readSound, setUpPage, showStatus, soundControls, timeControls } from './page.ts';
+import { graphicsControls, readSound, setUpPage, showStatus, soundControls, timeControls, viewControls } from './page.ts';
 
 // The scene: a sea stack with a lighthouse among lesser rocks, far out in deep water, a wreck on the
 // stack and its wreckage floating round it, a fishing boat working round the rocks, gulls over it
@@ -39,10 +39,19 @@ const WRECK = { angle: 0.95, glance: - 1.05 };
 // where the boat starts on its route: the angle about the stack (it then comes round in front of the
 // first view's stack, counter-clockwise seen from above)
 const BOAT_START = 0.3;
+// the HUD's help line round the lighthouse and aboard the ship
+const HELP = { lighthouse: 'Drag to orbit · scroll to zoom · click the sea to drop wreckage', ship: 'Drag to look around · click the sea to drop wreckage' };
+// aboard the ship: a person's field of view (degrees, vertical; the orbit's is a long lens), the near
+// plane (m: the orbit's 1 m cut the boom open at the view's edge, as the plane's depth there is
+// well under the distance), and the share of the boat's roll and pitch the view takes (a person's
+// balance takes out the rest)
+const SHIP_FOV = 55;
+const SHIP_NEAR = 0.2;
+const SHIP_TILT = 0.5;
 
 export async function startProject() {
 
-  setUpPage( 'Drag to orbit · scroll to zoom · click the sea to drop wreckage' );
+  setUpPage( HELP.lighthouse );
   const host = browserHost( { canvasHost: document.getElementById( 'app' )!, loading: document.getElementById( 'loading' ) } );
   const rocks = ROCKS.map( ( rock ) => new RockShape( rock ) );
   const main = rocks[ 0 ];
@@ -56,6 +65,7 @@ export async function startProject() {
   let materials!: WreckMaterials;
   let wreck!: ReturnType<typeof bowWreck>;
   let controls!: OrbitControls;
+  let ship: Aboard | null = null;
   let sound: Soundscape | null = null;
   let boat: Boat | null = null;
   let gulls: Gulls | null = null;
@@ -176,6 +186,7 @@ export async function startProject() {
       sound = createSoundscape( render.camera, soundSources( rocks, sea, wreck.group, gulls, boat ), readSound( SOUND_KEY ) );
       soundControls( sound, SOUND_KEY );
       controls = orbit( render, sea );
+      ship = aboard( render, boat, controls );
       dropOnClick( render, sea, ( x, z ) => floaters?.drop( x, z ) );
       // for the console and the tools: `__LIGHTHOUSE__.floaters.stats()`
       ( window as unknown as { __LIGHTHOUSE__: unknown } ).__LIGHTHOUSE__ = {
@@ -196,6 +207,8 @@ export async function startProject() {
           localLights: () => night,
           afterDay() {
 
+            // aboard, the camera follows the boat once the physics has moved it (afterWeather)
+            if ( ship?.on ) return;
             controls?.update();
             const camera = render.camera.position;
             // never under the sea, nor inside a rock
@@ -223,6 +236,7 @@ export async function startProject() {
 
               boat.night.value = night;
               boat.update();
+              ship?.update();
               render.localLights.refresh();
 
             }
@@ -237,6 +251,12 @@ export async function startProject() {
     },
   } );
 
+  viewControls( ( view ) => {
+
+    ship?.board( view === 'ship' );
+    return view === 'ship' ? HELP.ship : HELP.lighthouse;
+
+  } );
   timeControls( running.render );
   graphicsControls( running.render, running.frame.pacer, sound );
   return running;
@@ -322,6 +342,81 @@ function orbit( render: RenderParts, sea: number ): OrbitControls {
   controls.maxPolarAngle = Math.PI * 0.53;
   controls.update();
   return controls;
+
+}
+
+interface Aboard {
+  /** whether the camera is aboard */
+  readonly on: boolean;
+  /** boards the ship (true) or goes back to the orbit where it was left (false) */
+  board( on: boolean ): void;
+  /** aboard: the camera at the eye, after the boat has moved */
+  update(): void;
+}
+
+/** The view aboard the ship: the camera at a person's eye on deck, moving with the boat, looking
+ * ahead, turned by dragging. */
+function aboard( render: RenderParts, boat: Boat, controls: OrbitControls ): Aboard {
+
+  const { camera } = render;
+  const canvas = render.renderer.domElement;
+  const hull = boat.vessel.object;
+  const orbitLens = { fov: camera.fov, near: camera.near }, left = new THREE.Vector3();
+  // the look about the boat's heading: pitch (x, up positive) and yaw (y, to port positive)
+  const look = new THREE.Euler( - 0.05, 0, 0, 'YXZ' ), turn = new THREE.Euler( 0, 0, 0, 'YXZ' );
+  const tilt = new THREE.Quaternion(), level = new THREE.Quaternion(), view = new THREE.Quaternion(), ahead = new THREE.Vector3();
+  const UP = new THREE.Vector3( 0, 1, 0 );
+  let on = false, held: { x: number; y: number } | null = null;
+
+  // a drag carries the view with the pointer, a canvas's height turning it by the field of view
+  canvas.addEventListener( 'pointerdown', ( e ) => {
+
+    if ( on ) held = { x: e.clientX, y: e.clientY };
+
+  } );
+  canvas.addEventListener( 'pointermove', ( e ) => {
+
+    if ( ! held ) return;
+    const k = THREE.MathUtils.degToRad( SHIP_FOV ) / Math.max( canvas.clientHeight, 1 );
+    look.y += ( e.clientX - held.x ) * k;
+    look.x = THREE.MathUtils.clamp( look.x + ( e.clientY - held.y ) * k, - 1.3, 1.3 );
+    held = { x: e.clientX, y: e.clientY };
+
+  } );
+  for ( const type of [ 'pointerup', 'pointercancel' ] ) addEventListener( type, () => { held = null; } );
+
+  return {
+    get on() {
+
+      return on;
+
+    },
+    board( value ) {
+
+      if ( value === on ) return;
+      on = value;
+      controls.enabled = ! on;
+      if ( on ) left.copy( camera.position );
+      else camera.position.copy( left );
+      camera.fov = on ? SHIP_FOV : orbitLens.fov;
+      camera.near = on ? SHIP_NEAR : orbitLens.near;
+      camera.updateProjectionMatrix();
+
+    },
+    update() {
+
+      if ( ! on ) return;
+      camera.position.copy( EYE ).applyMatrix4( hull.matrixWorld );
+      hull.getWorldQuaternion( tilt );
+      ahead.set( 1, 0, 0 ).applyQuaternion( tilt );
+      level.setFromAxisAngle( UP, Math.atan2( - ahead.z, ahead.x ) );
+      // the camera looks down its -z, the boat's bow is its +x
+      turn.set( look.x, look.y - Math.PI / 2, 0 );
+      camera.quaternion.copy( level.slerp( tilt, SHIP_TILT ) ).multiply( view.setFromEuler( turn ) );
+      camera.updateMatrixWorld();
+
+    },
+  };
 
 }
 

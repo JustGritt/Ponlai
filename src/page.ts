@@ -1,5 +1,5 @@
 // The page round the scene: the start screen, the HUD's text, its sound controls, its settings panel
-// (the time of day and the graphics), and the sound's mute and volume kept between visits.
+// (the view, the time of day and the graphics), and the sound's mute and volume kept between visits.
 import type { DayPreset, RenderParts } from './render/index.ts';
 
 /** Sets the HUD's help line and its Settings button, which shows and hides the settings panel. */
@@ -157,6 +157,22 @@ export function soundControls( sound: { muted: boolean; volume: number }, prefix
     sound.volume = Number( slider.value );
     store( `${ prefix }.volume`, slider.value );
     if ( sound.muted && sound.volume > 0 ) mute( false );
+
+  } );
+
+}
+
+/** The settings panel's view: round the lighthouse or aboard the ship. `choose` moves the camera and
+ * gives the HUD's help line for the view. */
+export function viewControls( choose: ( view: string ) => string ): void {
+
+  const buttons = document.querySelectorAll<HTMLButtonElement>( '[data-view]' );
+  const help = document.getElementById( 'help' );
+  for ( const button of buttons ) button.addEventListener( 'click', () => {
+
+    for ( const b of buttons ) b.setAttribute( 'aria-pressed', String( b === button ) );
+    const text = choose( button.dataset.view! );
+    if ( help ) help.textContent = text;
 
   } );
 

@@ -52,8 +52,10 @@ npm run dev
 
 Open the address Vite prints and pick the graphics on the start screen (an address with `?quality=`
 skips it). Drag to orbit, scroll to zoom, click the sea to drop wreckage. The HUD's slider sets the
-volume; its Settings panel sets the time of day (a slider, the presets and a pause for the day's
-clock) and the graphics: the frame-rate cap at once, the quality by reloading into the same hour.
+volume; its Settings panel sets the view (round the lighthouse, or aboard the ship: standing at its
+starboard rail, riding the swell, dragging to look round), the time of day (a slider, the presets
+and a pause for the day's clock) and the graphics: the frame-rate cap at once, the quality by
+reloading into the same hour.
 
 URL options: Ponlai's options work here (see Ponlai's
 [URL options](https://github.com/HuberyLL/ponlai/blob/main/docs/reference/url-options.md)), for example

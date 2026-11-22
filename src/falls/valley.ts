@@ -20,7 +20,7 @@
 // vertex carries its sky's visibility (a horizon scan over the heights), its height over the water
 // beside it and the falls' spray on it, which the material reads.
 import * as THREE from 'three/webgpu';
-import { abs, attribute, cameraPosition, cross, dFdx, dFdy, dot, float, length, max, mix, mx_fractal_noise_float, mx_noise_float, mx_worley_noise_vec2, normalView, normalWorld, normalize, positionView, positionWorld, sign, smoothstep, vec3 } from 'three/tsl';
+import { abs, attribute, cameraPosition, cross, dFdx, dFdy, dot, float, length, max, mix, mx_fractal_noise_float, mx_noise_float, mx_noise_vec3, mx_worley_noise_vec2, normalView, normalWorld, normalize, positionView, positionWorld, sign, smoothstep, vec3 } from 'three/tsl';
 import { SimplexNoise } from 'three/addons/math/SimplexNoise.js';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { RenderParts } from '../render/index.ts';
@@ -518,17 +518,19 @@ export function valleyMaterial( render: RenderParts, { stones = false } = {} ): 
   // grass on the gentle slopes above the water, browner in patches
   const grassy = smoothstep( 0.66, 0.84, up.add( grain.mul( 0.08 ) ) ).mul( smoothstep( 0.4, 1.1, above.add( big.mul( 0.4 ) ) ) );
   const grass = mix( mix( rgb( 0x46562a ), rgb( 0x6c7038 ), smoothstep( - 0.4, 0.5, big.mul( 0.8 ).add( grain.mul( 0.4 ) ) ) ), rgb( 0x857a4a ), smoothstep( 0.3, 0.8, big ).mul( 0.55 ) );
-  // cobbles and gravel at and under the water's edge (Worley cells: the stones, their gaps darker)
-  const cells = mx_worley_noise_vec2( p.xz.mul( 4.2 ).add( p.y.mul( 0.3 ) ) );
+  // cobbles at and under the water's edge: round stones about the Worley cells' points (warped, so
+  // they come out uneven), each a dome darker to its rim, set in sandy grit
+  const warp = mx_noise_vec3( vec3( p.xz.mul( 1.3 ), 2.1 ) ).xy.mul( 0.55 );
+  const cells = mx_worley_noise_vec2( p.xz.mul( 3.6 ).add( warp ) );
   const fine = mx_worley_noise_vec2( p.xz.mul( 13 ).add( 5.3 ) );
-  // each stone a dome, darker to its edge; thin dark gaps; grit between
-  const gap = smoothstep( 0.0, 0.07, cells.y.sub( cells.x ) ).mul( mix( float( 0.78 ), float( 1.05 ), smoothstep( 0.55, 0.1, cells.x ) ) )
-    .mul( mix( float( 0.85 ), float( 1 ), smoothstep( 0.0, 0.1, fine.y.sub( fine.x ) ) ) );
+  const gap = smoothstep( 0.5, 0.3, cells.x ).mul( mix( float( 0.82 ), float( 1 ), smoothstep( 0.0, 0.06, cells.y.sub( cells.x ) ) ) )
+    .mul( mix( float( 0.72 ), float( 1.08 ), smoothstep( 0.45, 0.05, cells.x ) ) );
+  const grit = mix( rgb( 0x3a352c ), rgb( 0x5e574a ), smoothstep( 0.35, 0.05, fine.x ) );
   const tone = mx_noise_float( p.mul( 4.2 ) );
   let stone = mix( rgb( 0x6a655c ), rgb( 0x8f8576 ), smoothstep( - 0.5, 0.5, tone ) );
   stone = mix( stone, rgb( 0x5a5a5c ), smoothstep( 0.2, 0.7, mx_noise_float( p.mul( 1.1 ).add( 9 ) ) ).mul( 0.6 ) );
   stone = mix( stone, rgb( 0x9b7c55 ), smoothstep( 0.45, 0.8, mx_noise_float( p.mul( 3.7 ).add( 3 ) ) ).mul( 0.5 ) );
-  const gravel = mix( rgb( 0x2f2c27 ), stone, gap );
+  const gravel = mix( grit, stone, gap );
   const bed = stones ? float( 0 ) : smoothstep( 0.35, - 0.05, above.add( grain.mul( 0.2 ) ) ).mul( smoothstep( 0.25, 0.6, up ) );
   // green slime on the stones deeper down
   const slime = smoothstep( - 0.4, - 1.6, above ).mul( 0.5 );
@@ -545,7 +547,7 @@ export function valleyMaterial( render: RenderParts, { stones = false } = {} ): 
   // the stone's relief: cracks and knobs on the rock, the cobbles' domes; none on the grass
   const near = smoothstep( 40, 8, length( cameraPosition.sub( p ) ) );
   const knobs = mx_fractal_noise_float( p.mul( 2.3 ), 3, 2.2, 0.5, 1 ).mul( 0.035 ).add( mx_noise_float( p.mul( 9 ) ).mul( 0.008 ) );
-  const relief = knobs.mul( float( 1 ).sub( grassy.mul( 0.8 ) ) ).add( smoothstep( 0.0, 0.08, cells.y.sub( cells.x ) ).mul( 0.012 ).mul( bed ) );
+  const relief = knobs.mul( float( 1 ).sub( grassy.mul( 0.8 ) ) );
   material.normalNode = bumped( relief.mul( near ) );
   return material;
 

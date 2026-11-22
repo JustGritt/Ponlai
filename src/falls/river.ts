@@ -62,7 +62,9 @@ function runReach( boulders: readonly Boulder[] ): Reach {
       const speed = 0.4 + 1.3 * smooth( - 15, - 0.6, z ) + 0.3 * smooth( - 0.8, 0, toCrest );
       // foam: under the upper falls, in riffles, and in the boulders' wakes
       const below = z - upperPlunge;
-      let foam = ( below < 0 ? 1 : Math.exp( - below / 2.4 ) ) * smooth( UPPER.half + 3, UPPER.half + 0.5, Math.abs( x ) );
+      // an oval spreading from where the water lands, not quite solid, so its lace shows
+      const r = Math.hypot( x / ( UPPER.half + 2.2 ), Math.max( below, 0 ) / 3.2 );
+      let foam = 0.85 * Math.exp( - 1.6 * r * r );
       foam = Math.max( foam, 0.24 * smooth( - 14, - 4, z ) );
       for ( const b of inRun ) {
 

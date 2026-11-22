@@ -240,7 +240,8 @@ export function streamSurface( render: RenderParts, grid: HeightGrid, sea: numbe
       .add( mx_noise_vec3( vec3( q.mul( 3.7 ), shared.time.mul( 1.1 ).add( 5 ) ) ).xy.mul( 0.35 ) );
     const slope = carried( p.xz, v, 1.6, ripple ).mul( speed.mul( 0.22 ).add( 0.07 ) ).toVar();
     const N = normalize( vec3( slope.x.negate(), 1, slope.y.negate() ) ).toVar();
-    const foam = coverage( carried( p.xz, v, 1.6, ( q ) => lace( q, 1.6 ) ), flow.z, p ).toVar();
+    const pattern = carried( p.xz, v, 1.6, ( q ) => lace( q, 1.6 ) ).toVar();
+    const foam = coverage( pattern, flow.z, p ).toVar();
     const key = inputs.key( p ).toVar();
     // what it mirrors
     const R = reflect( V.negate(), N ).toVar();
@@ -255,7 +256,8 @@ export function streamSurface( render: RenderParts, grid: HeightGrid, sea: numbe
     const through = exp( shared.sigA.add( shared.scatter.mul( 0.3 ) ).mul( path ).negate() ).toVar();
     const body = shared.skyIrradianceSource.mul( sky ).mul( vec3( ...BODY ).div( Math.PI ) ).mul( float( 1 ).sub( through ) );
     let colour: V3 = mirror.mul( F ).add( inputs.scene( uvB ).mul( through ).add( body ).mul( float( 1 ).sub( F ) ) ).add( glint( N, V, key, 300 ) );
-    colour = mix( colour, foamLight( N, V, key, sky, float( 0.2 ) ), foam );
+    // (thinner foam greyer: the water shows through it)
+    colour = mix( colour, foamLight( N, V, key, sky, float( 0.2 ) ).mul( pattern.mul( 0.3 ).add( 0.75 ).min( 1 ) ), foam );
     return vec4( colour, 1 );
 
   } )();

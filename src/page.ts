@@ -1,24 +1,21 @@
-// The page round the scene: the start screen, the HUD's text, its time-of-day and sound controls, the
-// link back to the start screen, and the sound's mute and volume kept between visits.
+// The page round the scene: the start screen, the HUD's text, its sound controls, its settings panel
+// (the time of day and the graphics), and the sound's mute and volume kept between visits.
 import type { DayPreset, RenderParts } from './render/index.ts';
 
-/** Sets the HUD's help line and its link back to the start screen (the address keeps its other
- * options). */
+/** Sets the HUD's help line and its Settings button, which shows and hides the settings panel. */
 export function setUpPage( help: string ): void {
 
   const helpLine = document.getElementById( 'help' );
   if ( helpLine ) helpLine.textContent = help;
-  const links = document.getElementById( 'scenes' );
-  if ( ! links ) return;
-  links.replaceChildren();
-  // back to the start screen: the address without the graphics it chose
-  const params = new URLSearchParams( location.search );
-  params.delete( 'quality' );
-  params.delete( 'frameRate' );
-  const a = document.createElement( 'a' );
-  a.href = params.size ? `?${ params }` : location.pathname;
-  a.textContent = 'Graphics';
-  links.append( a );
+  const toggle = document.getElementById( 'settings-toggle' );
+  const panel = document.getElementById( 'settings' );
+  if ( ! toggle || ! panel ) return;
+  toggle.addEventListener( 'click', () => {
+
+    panel.hidden = ! panel.hidden;
+    toggle.setAttribute( 'aria-expanded', String( ! panel.hidden ) );
+
+  } );
 
 }
 
@@ -165,14 +162,130 @@ export function soundControls( sound: { muted: boolean; volume: number }, prefix
 
 }
 
-/** The time-of-day buttons. */
-export function presetButtons( render: RenderParts ): void {
+/** The hour as a clock shows it ("19:05"). */
+const clockTime =( hour: number ): string => {
+
+  const minutes = Math.floor( hour * 60 ) % 1440;
+  return `${ String( Math.floor( minutes / 60 ) ).padStart( 2, '0' ) }:${ String( minutes % 60 ).padStart( 2, '0' ) }`;
+
+};
+
+/** The settings panel's time of day: the slider and its clock, which follow the day as it passes, the
+ * day clock's pause, and the presets. */
+export function timeControls( render: RenderParts ): void {
+
+  const slider = document.getElementById( 'hour' ) as HTMLInputElement | null;
+  const clock = document.getElementById( 'clock' );
+  const pause = document.getElementById( 'pause' );
+  if ( ! slider || ! clock || ! pause ) return;
+  const { dayCycle } = render;
+
+  // each hour set bakes the sky again and the bakes queue, so a drag sets only its latest hour once
+  // the bake before it is done
+  let wanted: number | null = null, seeking = false;
+  const seek = async () => {
+
+    if ( seeking ) return;
+    seeking = true;
+    try {
+
+      while ( wanted !== null ) {
+
+        const hour = wanted;
+        wanted = null;
+        await render.setHour( hour );
+
+      }
+
+    } finally {
+
+      seeking = false;
+
+    }
+
+  };
+  slider.addEventListener( 'input', () => {
+
+    wanted = Number( slider.value );
+    clock.textContent = clockTime( wanted );
+    void seek();
+
+  } );
+  // the slider follows the day, but not while it is held or its hour is still being set
+  const follow = () => {
+
+    if ( seeking || slider.matches( ':active' ) ) return;
+    slider.value = String( dayCycle.hour );
+    clock.textContent = clockTime( dayCycle.hour );
+
+  };
+  follow();
+  setInterval( follow, 500 );
+
+  const showPause = () => {
+
+    pause.textContent = dayCycle.paused ? 'Resume' : 'Pause';
+
+  };
+  showPause();
+  pause.addEventListener( 'click', () => {
+
+    dayCycle.paused = ! dayCycle.paused;
+    showPause();
+
+  } );
 
   for ( const button of document.querySelectorAll<HTMLButtonElement>( '[data-preset]' ) ) {
 
-    button.addEventListener( 'click', () => void render.setPreset( button.dataset.preset as DayPreset ) );
+    button.addEventListener( 'click', () => void render.setPreset( button.dataset.preset as DayPreset ).then( follow ) );
 
   }
+
+}
+
+/** The settings panel's graphics, kept in the address and as the start screen's next choice: the
+ * frame-rate cap, set at once, and the quality tier, which the pipeline reads as it loads, so a new
+ * one reloads the scene (straight in, at the same hour). */
+export function graphicsControls( render: RenderParts, pacer: { readonly mode: string; readonly rate: number; setRate( rate: number | 'auto' ): void } ): void {
+
+  const tiers = document.querySelectorAll<HTMLButtonElement>( '[data-tier]' );
+  const rates = document.querySelectorAll<HTMLButtonElement>( '[data-fps]' );
+  const params = new URLSearchParams( location.search );
+  // the cap as the start screen names it: 0 is the tier's own rate
+  let fps = pacer.mode === 'fixed' ? pacer.rate : 0;
+  const show = () => {
+
+    for ( const b of tiers ) b.setAttribute( 'aria-pressed', String( b.dataset.tier === render.qualityTier ) );
+    for ( const b of rates ) b.setAttribute( 'aria-pressed', String( Number( b.dataset.fps ) === fps ) );
+
+  };
+  show();
+
+  for ( const button of rates ) button.addEventListener( 'click', () => {
+
+    fps = Number( button.dataset.fps );
+    pacer.setRate( fps || 'auto' );
+    if ( fps ) params.set( 'frameRate', String( fps ) );
+    else params.delete( 'frameRate' );
+    history.replaceState( null, '', `?${ params }` );
+    store( GRAPHICS_KEY, JSON.stringify( { tier: render.qualityTier, fps } ) );
+    show();
+
+  } );
+
+  for ( const button of tiers ) button.addEventListener( 'click', () => {
+
+    const tier = button.dataset.tier!;
+    if ( tier === render.qualityTier ) return;
+    store( GRAPHICS_KEY, JSON.stringify( { tier, fps } ) );
+    params.set( 'quality', tier );
+    params.delete( 'preset' );
+    params.set( 'hour', render.dayCycle.hour.toFixed( 3 ) );
+    if ( render.dayCycle.paused ) params.set( 'clock', 'paused' );
+    else params.delete( 'clock' );
+    location.search = params.toString();
+
+  } );
 
 }
 

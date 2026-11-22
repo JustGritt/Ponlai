@@ -16,7 +16,7 @@ import { bowWreck, wreckMaterials, type WreckMaterials } from './wreckage.ts';
 import { createSoundscape, type Soundscape, type SoundSources } from './sound.ts';
 import { createBoat, plotRoute, type Boat } from './boat.ts';
 import { createGulls, findPerches, type Gulls, type Orbit } from './gulls.ts';
-import { presetButtons, readSound, setUpPage, showStatus, soundControls } from './page.ts';
+import { graphicsControls, readSound, setUpPage, showStatus, soundControls, timeControls } from './page.ts';
 
 // The scene: a sea stack with a lighthouse among lesser rocks, far out in deep water, a wreck on the
 // stack and its wreckage floating round it, a fishing boat working round the rocks, gulls over it
@@ -237,7 +237,8 @@ export async function startProject() {
     },
   } );
 
-  presetButtons( running.render );
+  timeControls( running.render );
+  graphicsControls( running.render, running.frame.pacer );
   return running;
 
 }

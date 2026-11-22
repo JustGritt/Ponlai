@@ -238,7 +238,7 @@ export async function startProject() {
   } );
 
   timeControls( running.render );
-  graphicsControls( running.render, running.frame.pacer );
+  graphicsControls( running.render, running.frame.pacer, sound );
   return running;
 
 }

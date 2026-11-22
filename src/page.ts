@@ -245,8 +245,9 @@ export function timeControls( render: RenderParts ): void {
 
 /** The settings panel's graphics, kept in the address and as the start screen's next choice: the
  * frame-rate cap, set at once, and the quality tier, which the pipeline reads as it loads, so a new
- * one reloads the scene (straight in, at the same hour). */
-export function graphicsControls( render: RenderParts, pacer: { readonly mode: string; readonly rate: number; setRate( rate: number | 'auto' ): void } ): void {
+ * one reloads the scene (straight in, at the same hour) once the loading screen has faded back in
+ * over it and the sound out. */
+export function graphicsControls( render: RenderParts, pacer: { readonly mode: string; readonly rate: number; setRate( rate: number | 'auto' ): void }, sound: { muted: boolean } | null ): void {
 
   const tiers = document.querySelectorAll<HTMLButtonElement>( '[data-tier]' );
   const rates = document.querySelectorAll<HTMLButtonElement>( '[data-fps]' );
@@ -273,16 +274,29 @@ export function graphicsControls( render: RenderParts, pacer: { readonly mode: s
 
   } );
 
-  for ( const button of tiers ) button.addEventListener( 'click', () => {
+  let leaving = false;
+  for ( const button of tiers ) button.addEventListener( 'click', async () => {
 
     const tier = button.dataset.tier!;
-    if ( tier === render.qualityTier ) return;
+    if ( tier === render.qualityTier || leaving ) return;
+    leaving = true;
     store( GRAPHICS_KEY, JSON.stringify( { tier, fps } ) );
     params.set( 'quality', tier );
     params.delete( 'preset' );
     params.set( 'hour', render.dayCycle.hour.toFixed( 3 ) );
     if ( render.dayCycle.paused ) params.set( 'clock', 'paused' );
     else params.delete( 'clock' );
+    // (not stored: the next page keeps the visitor's own mute)
+    if ( sound ) sound.muted = true;
+    const loading = document.getElementById( 'loading' );
+    if ( loading ) {
+
+      // its lamp out, as the next page first paints it (a paused load lifted it with no transition)
+      loading.style.transition = '';
+      loading.classList.remove( 'done', 'lit' );
+      await Promise.allSettled( loading.getAnimations().map( ( a ) => a.finished ) );
+
+    }
     location.search = params.toString();
 
   } );

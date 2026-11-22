@@ -5,42 +5,149 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Lighthouse</title>
   <link rel="icon" href="data:," />
+  <link rel="preload" href="/fonts/im-fell-english-sc.woff2" as="font" type="font/woff2" crossorigin />
   <style>
+    /* IM Fell English SC by Igino Marini, SIL Open Font License (public/fonts/OFL.txt) */
+    @font-face { font-family: 'IM Fell English SC'; src: url(/fonts/im-fell-english-sc.woff2) format('woff2'); font-display: swap; }
+    :root {
+      --ink: #ece6da;
+      --lamp: #ffe9b8;
+      /* the loading screen's horizon, the title's top and size, the tower's height */
+      --horizon: 74%;
+      --top: clamp(20px, 8vh, 96px);
+      --title: clamp(38px, 8vw, 60px);
+      --tower: clamp(90px, 19vh, 180px);
+    }
     html, body { margin: 0; height: 100%; overflow: hidden; background: #000; font: 13px/1.4 system-ui, sans-serif; }
     #app { position: fixed; inset: 0; }
-    #loading { position: fixed; inset: 0; display: grid; place-items: center; color: #ccc; background: #000; transition: opacity 0.6s; }
-    #loading.done { opacity: 0; pointer-events: none; }
+
+    /* the loading screen: the scene's first view at dusk, drawn, its lamp lit once the scene starts loading */
+    #loading { position: fixed; inset: 0; overflow: hidden; color: var(--ink); transition: opacity 1s, visibility 0s 1s;
+      background:
+        radial-gradient(70% 22% at 50% var(--horizon), rgba(196, 104, 78, 0.38), transparent 70%),
+        linear-gradient(to bottom, #070b14 0%, #0e1524 32%, #1d2333 55%, #3d2b36 67%, #6e3f3a calc(var(--horizon) - 0.4%), #0b1018 var(--horizon), #04060a 100%); }
+    #loading.done { opacity: 0; visibility: hidden; pointer-events: none; }
+    #loading::before { content: ''; position: absolute; inset: 0; background:
+      radial-gradient(1.2px 1.2px at 12% 14%, #fff, transparent), radial-gradient(1px 1px at 23% 31%, #fff, transparent),
+      radial-gradient(1.4px 1.4px at 37% 9%, #fff, transparent), radial-gradient(1px 1px at 46% 38%, #fff, transparent),
+      radial-gradient(1.2px 1.2px at 61% 18%, #fff, transparent), radial-gradient(1px 1px at 72% 7%, #fff, transparent),
+      radial-gradient(1.3px 1.3px at 83% 27%, #fff, transparent), radial-gradient(1px 1px at 91% 12%, #fff, transparent),
+      radial-gradient(1px 1px at 6% 41%, #fff, transparent), radial-gradient(1px 1px at 67% 44%, #fff, transparent);
+      opacity: 0.55; }
+    #loading::after { content: ''; position: absolute; left: 0; right: 0; top: var(--horizon); bottom: 0; background:
+      radial-gradient(45% 35% at 50% 0, rgba(196, 104, 78, 0.16), transparent 70%),
+      repeating-linear-gradient(to bottom, transparent 0 5px, rgba(150, 170, 200, 0.035) 5px 6px); }
+    #loading .caption { position: absolute; top: var(--top); left: 16px; right: 16px; text-align: center; }
+    #loading h1 { margin: 0; font: 400 var(--title)/1 'IM Fell English SC', Georgia, serif; letter-spacing: 0.06em; text-shadow: 0 0 32px rgba(255, 214, 160, 0.18); }
+    /* the load's progress (the render pipeline and scene.ts write it) */
+    #loading .caption span { display: block; margin-top: 16px; font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase;
+      animation: breathe 2.6s ease-in-out infinite alternate; }
+    #loading:not(.lit) .caption span { visibility: hidden; }
+    #loading .keeper { position: absolute; left: 50%; top: var(--horizon); height: var(--tower); aspect-ratio: 1 / 2; transform: translate(-50%, -88.3%); }
+    #loading svg { display: block; width: 100%; height: 100%; fill: #06080c; }
+    #loading .band { fill: #170c10; }
+    #loading .glass { fill: #1a1f29; transition: fill 1.2s; }
+    #loading .window { fill: #11151c; transition: fill 1.6s 0.4s; }
+    #loading.lit .glass { fill: var(--lamp); }
+    #loading.lit .window { fill: #e9b978; }
+    /* the lamp's beam turning: seen from the side, its length is the cosine of its heading; brightest
+       as it swings past the viewer, faint behind the tower */
+    #loading .light { position: absolute; left: 50%; top: 31.7%; animation: kindle 2s ease-out both; }
+    #loading:not(.lit) .light { display: none; }
+    #loading .beam { position: absolute; left: 0; top: 0; width: min(80vw, 900px); height: calc(var(--tower) * 0.55); transform-origin: 0 50%;
+      clip-path: polygon(0 46%, 100% 0, 100% 100%, 0 54%);
+      background: linear-gradient(90deg, rgba(255, 244, 214, 0.75), rgba(206, 222, 236, 0.22) 28%, rgba(206, 222, 236, 0.06) 70%, transparent);
+      animation: sweep 8s infinite; }
+    #loading .flare { position: absolute; left: 0; top: 0; width: calc(var(--tower) * 0.6); aspect-ratio: 1; border-radius: 50%; translate: -50% -50%;
+      background: radial-gradient(circle, rgba(255, 246, 220, 0.95), rgba(255, 226, 170, 0.3) 22%, transparent 62%);
+      animation: flare 8s infinite; }
+    @keyframes kindle { from { opacity: 0; } }
+    @keyframes breathe { from { opacity: 0.4; } to { opacity: 0.75; } }
+    @keyframes sweep {
+      0% { transform: translateY(-50%) scaleX(1); opacity: 0.55; animation-timing-function: ease-in; }
+      25% { transform: translateY(-50%) scaleX(0.001); opacity: 1; animation-timing-function: ease-out; }
+      50% { transform: translateY(-50%) scaleX(-1); opacity: 0.55; animation-timing-function: ease-in; }
+      75% { transform: translateY(-50%) scaleX(-0.001); opacity: 0.1; animation-timing-function: ease-out; }
+      100% { transform: translateY(-50%) scaleX(1); opacity: 0.55; }
+    }
+    @keyframes flare {
+      0%, 50%, 100% { opacity: 0.45; transform: scale(1); animation-timing-function: ease-in; }
+      25% { opacity: 1; transform: scale(1.7); animation-timing-function: ease-out; }
+      75% { opacity: 0.2; transform: scale(0.9); animation-timing-function: ease-out; }
+    }
+
+    /* the HUD comes in once the scene shows */
     #hud { position: fixed; left: 16px; bottom: 16px; color: #e8e6e0; background: rgba(10, 14, 20, 0.55); padding: 10px 12px; border-radius: 8px;
-      backdrop-filter: blur(6px); user-select: none; max-width: calc(100vw - 56px); }
+      backdrop-filter: blur(6px); user-select: none; max-width: calc(100vw - 56px); transition: opacity 0.8s 0.4s; }
+    #loading:not(.done) ~ #hud { opacity: 0; visibility: hidden; }
     #hud p { margin: 0 0 8px; opacity: 0.85; }
     #hud .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
     #hud button { font: inherit; color: inherit; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px;
       padding: 4px 10px; cursor: pointer; }
     #hud button:hover { background: rgba(255, 255, 255, 0.2); }
+    #volume { width: 84px; margin: 0; accent-color: #e8e6e0; }
     #count { margin-left: 6px; opacity: 0.7; font-variant-numeric: tabular-nums; }
     #scenes a { color: inherit; opacity: 0.85; margin-left: 6px; }
     #scenes a:hover { opacity: 1; }
-    #setup { position: fixed; inset: 0; z-index: 1; display: grid; place-items: center; padding: 16px; background: #000; color: #e8e6e0; }
+
+    /* the start screen, over the loading screen's sky, under its title */
+    #setup { position: fixed; inset: 0; z-index: 1; display: grid; justify-items: center; align-content: start; overflow-y: auto;
+      padding: calc(var(--top) + var(--title) + 40px) 16px 24px; color: var(--ink); }
     #setup[hidden] { display: none; }
-    #setup form { width: min(340px, 100%); display: grid; gap: 18px; }
-    #setup h1 { margin: 0; font-size: 22px; font-weight: 600; }
+    #setup form { width: min(340px, 100%); display: grid; gap: 20px; animation: rise 0.7s ease-out both; }
+    @keyframes rise { from { opacity: 0; transform: translateY(8px); } }
     #setup fieldset { margin: 0; padding: 0; border: 0; display: flex; gap: 6px; }
-    #setup legend { margin-bottom: 6px; opacity: 0.7; }
-    #setup label { position: relative; flex: 1; text-align: center; padding: 9px 0; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 6px;
-      background: rgba(255, 255, 255, 0.06); cursor: pointer; }
-    #setup label:has(:checked) { background: rgba(255, 255, 255, 0.22); border-color: rgba(255, 255, 255, 0.55); }
-    #setup label:has(:focus-visible) { outline: 2px solid #9cc4ff; outline-offset: 2px; }
+    #setup legend { width: 100%; margin-bottom: 8px; padding: 0; text-align: center; font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase; opacity: 0.6; }
+    #setup label { position: relative; flex: 1; text-align: center; padding: 9px 0; border: 1px solid rgba(236, 230, 218, 0.2); border-radius: 6px;
+      background: rgba(8, 12, 20, 0.35); cursor: pointer; transition: background 0.15s, border-color 0.15s; }
+    #setup label:has(:checked) { background: rgba(255, 233, 184, 0.14); border-color: rgba(255, 233, 184, 0.7); color: #fff4dc; }
+    #setup label:has(:focus-visible) { outline: 2px solid var(--lamp); outline-offset: 2px; }
     #setup input { position: absolute; opacity: 0; pointer-events: none; }
-    #setup p { margin: 0; opacity: 0.8; }
+    #setup p { margin: 0; text-align: center; opacity: 0.75; }
     #setup p:empty { display: none; }
     #setup p.warn { color: #ffb38a; opacity: 1; }
-    #setup button { font: inherit; font-size: 15px; padding: 10px; color: #111; background: #e8e6e0; border: 0; border-radius: 6px; cursor: pointer; }
-    #setup button:disabled { opacity: 0.4; cursor: not-allowed; }
+    #setup button { font: inherit; letter-spacing: 0.2em; text-transform: uppercase; padding: 12px; color: #12151c; background: var(--lamp); border: 0;
+      border-radius: 6px; cursor: pointer; box-shadow: 0 0 24px rgba(255, 220, 160, 0.18); transition: box-shadow 0.2s; }
+    #setup button:disabled { opacity: 0.35; cursor: not-allowed; box-shadow: none; }
+    @media (hover: hover) {
+      #setup label:hover { border-color: rgba(236, 230, 218, 0.45); }
+      #setup button:not(:disabled):hover { box-shadow: 0 0 36px rgba(255, 220, 160, 0.4); }
+    }
+    /* a short screen has no room for the tower under the start screen; it rises once Start is pressed */
+    @media (max-height: 680px) { body:has(#setup:not([hidden])) #loading .keeper { display: none; } }
+    @media (prefers-reduced-motion: reduce) {
+      #loading .beam, #loading .flare, #loading .caption span, #setup form { animation: none; }
+      #loading .beam { transform: translateY(-50%); opacity: 0.5; }
+      #loading .caption span { opacity: 0.6; }
+    }
   </style>
 </head>
 <body>
   <div id="app"></div>
-  <div id="loading">Loading…</div>
+  <div id="loading">
+    <div class="caption">
+      <h1>Lighthouse</h1>
+      <span>Lighting the lamp…</span>
+    </div>
+    <div class="keeper" aria-hidden="true">
+      <div class="light"><div class="beam"></div><div class="flare"></div></div>
+      <svg viewBox="0 0 60 120">
+        <path d="M8.6 106 L9 101 L11 94 L13 89 L17 86.5 L23 86 L40 86 L45 87 L48 90 L50 96 L51.5 106 Z" />
+        <rect x="14" y="79" width="10" height="7.5" />
+        <polygon points="13,79.5 19,75 25,79.5" />
+        <rect class="window" x="16" y="81.5" width="1.6" height="2" />
+        <polygon points="24,86 36,86 34,44 26,44" />
+        <polygon class="band" points="25.33,58 34.67,58 34.38,52 25.62,52" />
+        <polygon class="band" points="24.67,72 35.33,72 35.05,66 24.95,66" />
+        <rect class="window" x="29.4" y="61" width="1.2" height="2" />
+        <rect x="23" y="42" width="14" height="2.2" />
+        <rect x="24" y="39.6" width="12" height="0.6" />
+        <rect class="glass" x="26.5" y="34" width="7" height="8" />
+        <polygon points="25,34.4 35,34.4 30,29" />
+        <rect x="29.6" y="25.5" width="0.8" height="4" />
+      </svg>
+    </div>
+  </div>
   <div id="hud">
     <p id="help"></p>
     <div class="row">
@@ -49,13 +156,13 @@
       <button data-preset="dusk">Dusk</button>
       <button data-preset="midnight">Midnight</button>
       <button id="sound" aria-pressed="true">Sound: on</button>
+      <input id="volume" type="range" min="0" max="1" step="0.05" aria-label="Volume" />
       <span id="count"></span>
       <span id="scenes"></span>
     </div>
   </div>
   <div id="setup" hidden>
-    <form>
-      <h1 id="setup-title">Lighthouse</h1>
+    <form aria-label="Graphics">
       <fieldset>
         <legend>Graphics</legend>
         <label><input type="radio" name="tier" value="low" required /> Low</label>

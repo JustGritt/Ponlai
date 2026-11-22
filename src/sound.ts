@@ -46,12 +46,16 @@ export interface Soundscape {
   /** a splash at x, y, z where something struck the water at `speed` (m/s); `size` scales it
    * down for something small (about 0.2 for a fish's) */
   splash( x: number, y: number, z: number, speed: number, size?: number ): void;
+  /** the scene shows: the sound, quiet while it loaded, rises to the full volume */
+  reveal(): void;
   muted: boolean;
+  /** 0 to 1 */
+  volume: number;
 }
 
-export function createSoundscape( camera: THREE.Camera, sources: SoundSources, muted: boolean ): Soundscape {
+export function createSoundscape( camera: THREE.Camera, sources: SoundSources, settings: { muted: boolean; volume: number } ): Soundscape {
 
-  const rig = createAudioRig( camera, muted );
+  const rig = createAudioRig( camera, settings );
   const { context, place, positional } = rig;
 
   let layers: {
@@ -91,6 +95,7 @@ export function createSoundscape( camera: THREE.Camera, sources: SoundSources, m
       gulls, creaks, splashes,
       gullVoices: new Voices( rig, 3, 14, 1 ), creakVoices: new Voices( rig, 2, 7, 1.3 ), splashVoices: new Voices( rig, 3, 8, 1 ),
     };
+    rig.begin();
 
   } ).catch( ( error ) => console.warn( 'sound: the clips did not load', error ) );
 
@@ -120,6 +125,17 @@ export function createSoundscape( camera: THREE.Camera, sources: SoundSources, m
       rig.muted = value;
 
     },
+    get volume() {
+
+      return rig.volume;
+
+    },
+    set volume( value: number ) {
+
+      rig.volume = value;
+
+    },
+    reveal: () => rig.reveal(),
     update( dt, night, seaLevel ) {
 
       // the listener follows the camera

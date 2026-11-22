@@ -8,7 +8,7 @@
 // the hand about the wrist, lagging it) and holds a gliding gull's crank, the arm raised and the
 // hand drooped; and folds them, each wing vertex moving toward where it lies on a resting gull's
 // back (`aFolded`), the legs coming down as it does. It then turns and places the bird by its
-// instance, as the fish are (life/FishMaterial.ts). It casts no shadow.
+// instance, as Ponlai's island does its fish (packages/island/life). It casts no shadow.
 //
 // The flight, on the CPU: each gull flying holds to a circle (an orbit: round the lantern, over a
 // stack, or over the boat, which moves) by steering along the circle's tangent, bending in toward

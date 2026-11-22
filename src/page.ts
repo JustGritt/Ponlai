@@ -1,42 +1,16 @@
-// The page round the scenes: the HUD's text, its time-of-day and sound buttons, the link to the
-// other scene, and the sound's mute kept between visits.
+// The page round the scene: the start screen, the HUD's text, its time-of-day and sound controls, the
+// link back to the start screen, and the sound's mute and volume kept between visits.
 import type { DayPreset, RenderParts } from './render/index.ts';
 
-/** The scenes the page can show, by their `?scene=` name. */
-export const SCENES = { lighthouse: 'Lighthouse', waterfall: 'Waterfall' } as const;
-export type SceneName = keyof typeof SCENES;
+/** Sets the HUD's help line and its link back to the start screen (the address keeps its other
+ * options). */
+export function setUpPage( help: string ): void {
 
-/** The scene the address names (the lighthouse by default). */
-export function sceneFromAddress( params: URLSearchParams ): SceneName {
-
-  const name = params.get( 'scene' );
-  return name && name in SCENES ? name as SceneName : 'lighthouse';
-
-}
-
-/** Sets the page's title, the HUD's help line, and the link to the other scenes (the address keeps
- * its other options). */
-export function setUpPage( scene: SceneName, help: string ): void {
-
-  document.title = SCENES[ scene ];
   const helpLine = document.getElementById( 'help' );
   if ( helpLine ) helpLine.textContent = help;
   const links = document.getElementById( 'scenes' );
   if ( ! links ) return;
   links.replaceChildren();
-  for ( const [ name, title ] of Object.entries( SCENES ) as [ SceneName, string ][] ) {
-
-    if ( name === scene ) continue;
-    const params = new URLSearchParams( location.search );
-    if ( name === 'lighthouse' ) params.delete( 'scene' );
-    else params.set( 'scene', name );
-    const a = document.createElement( 'a' );
-    const query = params.toString();
-    a.href = query ? `?${ query }` : location.pathname;
-    a.textContent = `${ title } →`;
-    links.append( a );
-
-  }
   // back to the start screen: the address without the graphics it chose
   const params = new URLSearchParams( location.search );
   params.delete( 'quality' );
@@ -54,9 +28,9 @@ export interface Graphics { tier: string; fps: number }
 
 const GRAPHICS_KEY = 'ponlai.graphics';
 
-/** Shows the start screen for `scene`, set to the last visit's choice or else this device's, with a
- * warning where WebGPU is missing; resolves with the choice once the visitor presses Start. */
-export async function chooseGraphics( scene: SceneName ): Promise<Graphics> {
+/** Shows the start screen, set to the last visit's choice or else this device's, with a warning where
+ * WebGPU is missing; resolves with the choice once the visitor presses Start. */
+export async function chooseGraphics(): Promise<Graphics> {
 
   const screen = document.getElementById( 'setup' )!;
   const form = screen.querySelector( 'form' )!;
@@ -64,7 +38,6 @@ export async function chooseGraphics( scene: SceneName ): Promise<Graphics> {
   const start = form.querySelector( 'button' )!;
   const tier = form.elements.namedItem( 'tier' ) as RadioNodeList;
   const fps = form.elements.namedItem( 'fps' ) as RadioNodeList;
-  document.getElementById( 'setup-title' )!.textContent = SCENES[ scene ];
 
   // (no WebGPU types in this TypeScript's DOM library)
   const gpu = ( navigator as { gpu?: { requestAdapter(): Promise<{ info?: { isFallbackAdapter?: boolean } } | null> } } ).gpu;
@@ -75,11 +48,11 @@ export async function chooseGraphics( scene: SceneName ): Promise<Graphics> {
   let pick: Graphics = phone ? { tier: 'low', fps: 30 } : { tier: 'high', fps: 0 };
   try {
 
-    pick = { ...pick, ...JSON.parse( localStorage.getItem( GRAPHICS_KEY ) ?? '{}' ) };
+    pick = { ...pick, ...JSON.parse( stored( GRAPHICS_KEY ) ?? '{}' ) };
 
   } catch {
 
-    // a private window may refuse, or the stored choice be unreadable: this device's then
+    // an unreadable stored choice: this device's then
 
   }
   // a value no button has leaves its group unchecked, and `required` holds Start until one is picked
@@ -114,59 +87,79 @@ export async function chooseGraphics( scene: SceneName ): Promise<Graphics> {
   }, { once: true } ) );
   screen.hidden = true;
   const choice = { tier: tier.value, fps: Number( fps.value ) };
+  store( GRAPHICS_KEY, JSON.stringify( choice ) );
+  return choice;
+
+}
+
+// the volume of a first visit: a little under the full mix
+const DEFAULT_VOLUME = 0.8;
+
+// local storage, which a private window may refuse: a read then finds nothing and a write lasts
+// this visit
+const stored = ( key: string ) => {
+
   try {
 
-    localStorage.setItem( GRAPHICS_KEY, JSON.stringify( choice ) );
+    return localStorage.getItem( key );
+
+  } catch {
+
+    return null;
+
+  }
+
+};
+const store = ( key: string, value: string ) => {
+
+  try {
+
+    localStorage.setItem( key, value );
 
   } catch {
 
     // kept for this visit only
 
   }
-  return choice;
+
+};
+
+/** The sound's mute and volume from an earlier visit (`<prefix>.muted`, `<prefix>.volume`). */
+export function readSound( prefix: string ): { muted: boolean; volume: number } {
+
+  const volume = Number( stored( `${ prefix }.volume` ) ?? DEFAULT_VOLUME );
+  return { muted: stored( `${ prefix }.muted` ) === '1', volume: Number.isFinite( volume ) ? Math.min( Math.max( volume, 0 ), 1 ) : DEFAULT_VOLUME };
 
 }
 
-/** Whether the sound was turned off on an earlier visit. */
-export function readMuted( key: string ): boolean {
-
-  try {
-
-    return localStorage.getItem( key ) === '1';
-
-  } catch {
-
-    return false;
-
-  }
-
-}
-
-/** The sound's button: on or off, remembered under `key`. */
-export function soundButton( sound: { muted: boolean }, key: string ): void {
+/** The HUD's sound controls: the mute button and the volume slider, remembered under `prefix`.
+ * Turning the volume up unmutes. */
+export function soundControls( sound: { muted: boolean; volume: number }, prefix: string ): void {
 
   const button = document.getElementById( 'sound' );
-  if ( ! button ) return;
+  const slider = document.getElementById( 'volume' ) as HTMLInputElement | null;
+  if ( ! button || ! slider ) return;
   const show = () => {
 
     button.textContent = sound.muted ? 'Sound: off' : 'Sound: on';
     button.setAttribute( 'aria-pressed', String( ! sound.muted ) );
 
   };
-  show();
-  button.addEventListener( 'click', () => {
+  const mute = ( muted: boolean ) => {
 
-    sound.muted = ! sound.muted;
+    sound.muted = muted;
     show();
-    try {
+    store( `${ prefix }.muted`, muted ? '1' : '0' );
 
-      localStorage.setItem( key, sound.muted ? '1' : '0' );
+  };
+  slider.value = String( sound.volume );
+  show();
+  button.addEventListener( 'click', () => mute( ! sound.muted ) );
+  slider.addEventListener( 'input', () => {
 
-    } catch {
-
-      // a private window may refuse; the choice then lasts this visit
-
-    }
+    sound.volume = Number( slider.value );
+    store( `${ prefix }.volume`, slider.value );
+    if ( sound.muted && sound.volume > 0 ) mute( false );
 
   } );
 

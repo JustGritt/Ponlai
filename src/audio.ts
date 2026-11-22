@@ -1,8 +1,15 @@
-// What both scenes' sound is built on: three's listener on the camera, a gentle compressor on the
+// What the scene's sound is built on: three's listener on the camera, a gentle compressor on the
 // master, the clips loaded from public/audio, positional voices placed directly (not through the
-// scene graph), and the mute. Browsers start audio only after a gesture: the context resumes on the
-// first pointer or key press, and sleeps while the tab is hidden.
+// scene graph), the mute and the volume, and the quiet start. Browsers start audio only after a
+// gesture: the context resumes on the first pointer or key press (the start screen's Start is one),
+// and sleeps while the tab is hidden.
 import * as THREE from 'three/webgpu';
+
+// the share of the volume the sound creeps up to while the loading screen still hides the scene,
+// and how fast (s, the time constant): a sea at full strength over a still-black page startles
+const LOADING_SHARE = 0.25, LOADING_RISE = 4;
+// the time constant (s) of the rise to the full volume once the scene shows
+const REVEAL_RISE = 1.5;
 
 export const random = ( a: number, b: number ) => a + Math.random() * ( b - a );
 export const pick = <T>( list: readonly T[] ) => list[ Math.floor( Math.random() * list.length ) ];
@@ -13,6 +20,12 @@ export interface AudioRig {
   /** whether the context is running (after a gesture, while the tab shows) */
   readonly running: boolean;
   muted: boolean;
+  /** the visitor's volume, 0 to 1 (squared into the gain, so the slider reads as loudness) */
+  volume: number;
+  /** the clips have started: the sound rises from silence (slowly to a quiet share while loading) */
+  begin(): void;
+  /** the scene shows: the sound rises the rest of the way */
+  reveal(): void;
   /** a clip from public/audio, by name */
   load( name: string ): Promise<AudioBuffer>;
   /** a positional voice: full at `ref` metres, falling off by `rolloff` (the inverse model) */
@@ -23,7 +36,9 @@ export interface AudioRig {
   loop( buffer: AudioBuffer, volume: number, at?: { position: THREE.Vector3; ref: number; rolloff: number; rate?: number } ): THREE.Audio | THREE.PositionalAudio;
 }
 
-export function createAudioRig( camera: THREE.Camera, muted: boolean ): AudioRig {
+export function createAudioRig( camera: THREE.Camera, settings: { muted: boolean; volume: number } ): AudioRig {
+
+  let { muted, volume } = settings;
 
   const listener = new THREE.AudioListener();
   camera.add( listener );
@@ -37,7 +52,11 @@ export function createAudioRig( camera: THREE.Camera, muted: boolean ): AudioRig
   compressor.release.value = 0.3;
   listener.gain.disconnect();
   listener.gain.connect( compressor ).connect( context.destination );
-  listener.gain.gain.value = muted ? 0 : 1;
+  // the master: silent until the clips start, then the volume (or none, muted) times the page's share
+  const master = listener.gain.gain;
+  let share = LOADING_SHARE, begun = false;
+  const glide = ( seconds: number ) => master.setTargetAtTime( begun && ! muted ? volume * volume * share : 0, context.currentTime, seconds );
+  master.value = 0;
 
   // start on the first gesture; sleep while hidden
   let started = false;
@@ -106,7 +125,30 @@ export function createAudioRig( camera: THREE.Camera, muted: boolean ): AudioRig
     set muted( value: boolean ) {
 
       muted = value;
-      listener.gain.gain.setTargetAtTime( muted ? 0 : 1, context.currentTime, 0.15 );
+      glide( 0.15 );
+
+    },
+    get volume() {
+
+      return volume;
+
+    },
+    set volume( value: number ) {
+
+      volume = value;
+      glide( 0.05 );
+
+    },
+    begin() {
+
+      begun = true;
+      glide( share < 1 ? LOADING_RISE : REVEAL_RISE );
+
+    },
+    reveal() {
+
+      share = 1;
+      glide( REVEAL_RISE );
 
     },
     load: ( name ) => loader.loadAsync( `${ base }${ name }.ogg` ),

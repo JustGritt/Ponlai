@@ -16,7 +16,7 @@ import { bowWreck, wreckMaterials, type WreckMaterials } from './wreckage.ts';
 import { createSoundscape, type Soundscape, type SoundSources } from './sound.ts';
 import { createBoat, plotRoute, type Boat } from './boat.ts';
 import { createGulls, findPerches, type Gulls, type Orbit } from './gulls.ts';
-import { presetButtons, readMuted, setUpPage, showStatus, soundButton } from './page.ts';
+import { presetButtons, readSound, setUpPage, showStatus, soundControls } from './page.ts';
 
 // The scene: a sea stack with a lighthouse among lesser rocks, far out in deep water, a wreck on the
 // stack and its wreckage floating round it, a fishing boat working round the rocks, gulls over it
@@ -30,7 +30,8 @@ const TARGET_HEIGHT = STACK_TOP - 1.5;
 // how close (m) the camera may come to a rock's waterline below its top
 const CAMERA_CLEARANCE = 2;
 // whether the sound was turned off, kept for the next visit
-const MUTED_KEY = 'lighthouse.muted';
+// whether the sound was turned off and its volume, kept for the next visit under this prefix
+const SOUND_KEY = 'lighthouse';
 // where the ship struck: the angle about the stack of the point its stem hit (radians from +x toward
 // +z; the first view looks at the stack from about 0.75), and how far the line it came in on turns
 // from straight at the rock (a glancing blow, so the first view sees the hull from the side)
@@ -41,7 +42,7 @@ const BOAT_START = 0.3;
 
 export async function startProject() {
 
-  setUpPage( 'lighthouse', 'Drag to orbit · scroll to zoom · click the sea to drop wreckage' );
+  setUpPage( 'Drag to orbit · scroll to zoom · click the sea to drop wreckage' );
   const host = browserHost( { canvasHost: document.getElementById( 'app' )!, loading: document.getElementById( 'loading' ) } );
   const rocks = ROCKS.map( ( rock ) => new RockShape( rock ) );
   const main = rocks[ 0 ];
@@ -114,8 +115,9 @@ export async function startProject() {
 
     },
     ambient: () => ( { ambientData: neutralSeaLattice( { sea } ), world: { group: world } } ),
-    afterAmbient( { render } ) {
+    afterAmbient( { render, host } ) {
 
+      host.status( 'Floating the wreckage…' );
       // what casts into the sun's shadow map: the stack, the lighthouse, the rocks near them and the
       // water round them (the far stacks shade only themselves)
       const casters = lighthouse.bounds();
@@ -146,7 +148,7 @@ export async function startProject() {
         ...rockMeshes.slice( 1 ).map( ( mesh ) => new THREE.Box3().setFromObject( mesh ) ),
       ],
     } ),
-    async afterWater( { render, sizing } ) {
+    async afterWater( { render, sizing, host } ) {
 
       sizing.resize();
       const probe = new WaveProbe( render, fieldNodes );
@@ -171,16 +173,21 @@ export async function startProject() {
         ceiling: ceiling( rocks, sea, lighthouse.lamp, wreckBox, boat ),
       } );
       world.add( gulls.mesh );
-      sound = createSoundscape( render.camera, soundSources( rocks, sea, wreck.group, gulls, boat ), readMuted( MUTED_KEY ) );
-      soundButton( sound, MUTED_KEY );
+      sound = createSoundscape( render.camera, soundSources( rocks, sea, wreck.group, gulls, boat ), readSound( SOUND_KEY ) );
+      soundControls( sound, SOUND_KEY );
       controls = orbit( render, sea );
       dropOnClick( render, sea, ( x, z ) => floaters?.drop( x, z ) );
       // for the console and the tools: `__LIGHTHOUSE__.floaters.stats()`
       ( window as unknown as { __LIGHTHOUSE__: unknown } ).__LIGHTHOUSE__ = {
         floaters, probe, controls, camera: render.camera, boat, route, gulls, shore: ( x: number, z: number ) => shoreDistance( rocks, x, z ),
       };
+      // next: the haze's bake and every shader's first build, the longest wait on a phone
+      host.status( 'Compiling shaders…' );
 
     },
+    afterShared: ( { host } ) => host.status( 'Almost there…' ),
+    // the sound, quiet while the page loaded, comes up as the scene shows
+    onRevealed: () => sound?.reveal(),
     frame: ( { render, shared } ) => {
 
       let night = 0;

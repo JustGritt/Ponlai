@@ -2,3 +2,5 @@ node_modules/
 dist/
 # what the tools write (tools/project.mjs, output)
 artifacts/
+# the global gitignore drops *.bin, but the page fetches these at runtime
+!public/**/*.bin
